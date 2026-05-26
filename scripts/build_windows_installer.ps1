@@ -40,7 +40,11 @@ if (-not (Test-Path $RedistPath)) {
 }
 
 Write-Host "==> Kurulum paketi (Setup.exe)"
-& $Iscc "windows\installer\directdrop.iss"
+$VersionLine = Get-Content (Join-Path $Root "pubspec.yaml") | Select-String '^version:\s*(.+)$'
+$AppVersion = $VersionLine.Line -replace '^version:\s*',''
+$AppVersion = $AppVersion.Split('+')[0].Trim()
+Write-Host "Sürüm: $AppVersion"
+& $Iscc "/DMyAppVersion=$AppVersion" (Join-Path $Root "windows\installer\directdrop.iss")
 
 $Output = Get-ChildItem -Path (Join-Path $Root "dist\windows") -Filter "DirectDrop-Setup-*.exe" |
     Sort-Object LastWriteTime -Descending |

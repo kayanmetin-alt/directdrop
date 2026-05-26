@@ -13,6 +13,7 @@ import 'join_screen.dart';
 import 'paired_connect_screen.dart';
 import 'transfer_screen.dart';
 import '../widgets/download_location_settings.dart';
+import '../widgets/app_version_label.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -399,6 +400,8 @@ class _HomeScreenState extends State<HomeScreen> {
                         },
                       ),
               ),
+              const SizedBox(height: 12),
+              const AppVersionLabel(),
             ],
           ),
         ),

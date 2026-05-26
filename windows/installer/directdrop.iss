@@ -1,7 +1,9 @@
 ; DirectDrop Windows installer — build with Inno Setup 6 after `flutter build windows --release`
 
 #define MyAppName "DirectDrop"
-#define MyAppVersion "1.0.3"
+#ifndef MyAppVersion
+#define MyAppVersion "1.0.6"
+#endif
 #define MyAppPublisher "DirectDrop"
 #define MyAppExeName "directdrop.exe"
 #define BuildDir "..\..\build\windows\x64\runner\Release"
