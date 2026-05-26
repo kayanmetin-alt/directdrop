@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:firebase_database/firebase_database.dart';
 import 'package:flutter/foundation.dart';
@@ -19,6 +20,7 @@ class PairedAutoConnectService extends ChangeNotifier {
 
   static const _connectCooldown = Duration(seconds: 15);
   static const _syncInterval = Duration(seconds: 20);
+  static const _desktopSyncInterval = Duration(seconds: 8);
   static const _pendingSessionTimeout = Duration(seconds: 95);
   static const _inviteNudgeInterval = Duration(seconds: 12);
 
@@ -113,7 +115,7 @@ class PairedAutoConnectService extends ChangeNotifier {
     _scheduleSync();
   }
 
-  /// Manuel dokunuş için bağlantı dener. Düşük deviceId her zaman ev sahibi olur.
+  /// Manuel dokunuş — force:true ise cihaz kimliği fark etmez, oda açılır.
   Future<void> requestConnection(
     PairedDevice peer, {
     bool force = false,
@@ -130,7 +132,7 @@ class PairedAutoConnectService extends ChangeNotifier {
         _myDeviceId ?? await DeviceIdentityService.instance.getDeviceId();
     _myDeviceId = myId;
 
-    if (_shouldHost(myId, peer.deviceId)) {
+    if (force || _shouldHost(myId, peer.deviceId)) {
       final existing = _sessionsByPeerId[peer.deviceId];
       if (existing != null && !existing.isConnected) {
         if (!force) return;
@@ -140,7 +142,7 @@ class PairedAutoConnectService extends ChangeNotifier {
       return;
     }
 
-    // Yüksek deviceId: ev sahibi olma, gelen daveti bekle.
+    // Otomatik senkron: düşük deviceId ev sahibi olur; yüksek ID daveti bekler.
     await processPendingInvites();
     _scheduleSync(immediate: true);
   }
@@ -326,7 +328,8 @@ class PairedAutoConnectService extends ChangeNotifier {
 
   void _onPresenceChanged() {
     for (final peer in PairedDevicesService.instance.devices) {
-      if (!PairedPresenceService.instance.isStrictlyOnline(peer.deviceId) &&
+      // Oturumu yalnızca cihaz gerçekten çevrimdışı olunca kapat (35 sn değil 45 sn).
+      if (!PairedPresenceService.instance.isOnline(peer.deviceId) &&
           _sessionsByPeerId.containsKey(peer.deviceId)) {
         unawaited(_disposeSession(peer.deviceId));
       }
@@ -334,9 +337,14 @@ class PairedAutoConnectService extends ChangeNotifier {
     _scheduleSync(immediate: true);
   }
 
+  Duration get _effectiveSyncInterval =>
+      Platform.isWindows || Platform.isMacOS || Platform.isLinux
+          ? _desktopSyncInterval
+          : _syncInterval;
+
   void _startPeriodicSync() {
     _periodicSyncTimer?.cancel();
-    _periodicSyncTimer = Timer.periodic(_syncInterval, (_) {
+    _periodicSyncTimer = Timer.periodic(_effectiveSyncInterval, (_) {
       _scheduleSync(immediate: true);
     });
   }

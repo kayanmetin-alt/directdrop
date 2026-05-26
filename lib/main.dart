@@ -100,6 +100,9 @@ class DirectDropApp extends StatefulWidget {
 class _DirectDropAppState extends State<DirectDropApp> with WidgetsBindingObserver {
   final _registry = DeviceRegistryService();
 
+  bool get _isDesktop =>
+      Platform.isWindows || Platform.isMacOS || Platform.isLinux;
+
   @override
   void initState() {
     super.initState();
@@ -118,8 +121,10 @@ class _DirectDropAppState extends State<DirectDropApp> with WidgetsBindingObserv
       unawaited(_goOffline());
     } else if (state == AppLifecycleState.resumed) {
       unawaited(_goOnline());
-    } else if (state == AppLifecycleState.paused ||
-        state == AppLifecycleState.hidden) {
+    } else if (!_isDesktop &&
+        (state == AppLifecycleState.paused ||
+            state == AppLifecycleState.hidden)) {
+      // iOS/Android: arka planda çevrimdışı say.
       unawaited(_markOffline());
     }
   }
@@ -135,6 +140,7 @@ class _DirectDropAppState extends State<DirectDropApp> with WidgetsBindingObserv
     await PairedPresenceService.instance.start();
     await PairedAutoConnectService.instance.start();
     PairedAutoConnectService.instance.onAppResumed();
+    await WakeListenerService.instance.start();
     unawaited(WakeListenerService.instance.processPendingRequests());
     unawaited(PairedAutoConnectService.instance.processPendingInvites());
   }
