@@ -14,7 +14,6 @@ import '../services/device_registry_service.dart';
 import '../services/file_transfer_service.dart';
 import '../services/firebase_auth_service.dart';
 import '../services/firebase_signaling_service.dart';
-import '../services/paired_devices_service.dart';
 import '../services/transfer_history_service.dart';
 import '../services/webrtc_service.dart';
 
@@ -39,7 +38,6 @@ class TransferSessionController extends ChangeNotifier {
   bool _disposed = false;
   bool _disconnecting = false;
   bool _reconnecting = false;
-  bool _pairSaved = false;
   bool _wasBackgrounded = false;
   int _guestWaitGeneration = 0;
   int _connectionWatchGeneration = 0;
@@ -87,7 +85,6 @@ class TransferSessionController extends ChangeNotifier {
 
   Future<RoomSession> createRoom() async {
     _setBusy(true);
-    _pairSaved = false;
     try {
       await FirebaseAuthService.instance.ensureSignedIn();
       final peerId = _uuid.v4();
@@ -159,7 +156,6 @@ class TransferSessionController extends ChangeNotifier {
 
   Future<RoomSession> joinRoom(String roomCode) async {
     _setBusy(true);
-    _pairSaved = false;
     try {
       await FirebaseAuthService.instance.ensureSignedIn();
       final normalizedCode = roomCode.trim().toUpperCase();
@@ -215,7 +211,6 @@ class TransferSessionController extends ChangeNotifier {
     WakeRequestType wakeType = WakeRequestType.connect,
   }) async {
     _setBusy(true);
-    _pairSaved = false;
     try {
       final peerId = _uuid.v4();
       final roomCode = RoomCodeGenerator.generate();
@@ -274,7 +269,6 @@ class TransferSessionController extends ChangeNotifier {
   /// Uygulama açıkken eşleşmiş cihaza doğrudan davet gönderir (wake yerine).
   Future<RoomSession> hostPairInvite(PairedDevice peer) async {
     _setBusy(true);
-    _pairSaved = false;
     try {
       final peerId = _uuid.v4();
       final roomCode = RoomCodeGenerator.generate();
@@ -357,31 +351,7 @@ class TransferSessionController extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> _persistPairIfNeeded() async {
-    if (_pairSaved || _session == null || _disposed) return;
-
-    final session = _session!;
-    final myId = await _persistentDeviceId();
-    String? remoteId;
-    String? remoteName;
-
-    if (session.role == PeerRole.host) {
-      remoteId = await _signaling.getGuestPersistentId(session.roomCode);
-      remoteName = await _signaling.getGuestDeviceName(session.roomCode);
-    } else {
-      remoteId = await _signaling.getHostPersistentId(session.roomCode);
-      remoteName = await _signaling.getHostDeviceName(session.roomCode);
-    }
-
-    if (remoteId == null || remoteId.isEmpty || remoteId == myId) return;
-
-    await PairedDevicesService.instance.savePair(
-      deviceId: remoteId,
-      displayName: remoteName ?? 'Cihaz',
-      platform: 'unknown',
-    );
-    _pairSaved = true;
-  }
+  Future<void> _persistPairIfNeeded() async {}
 
   Future<void> _startWebRtc({
     required String remotePeerId,
