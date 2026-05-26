@@ -4,6 +4,7 @@
 
 list(APPEND FLUTTER_PLUGIN_LIST
   firebase_core
+  firebase_database
   flutter_webrtc
   permission_handler_windows
   share_plus

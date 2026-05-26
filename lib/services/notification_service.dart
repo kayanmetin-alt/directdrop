@@ -56,8 +56,8 @@ class NotificationService {
   }
 
   Future<void> _initFirebaseMessaging() async {
-    if (Platform.isMacOS) {
-      // macOS'ta push henüz yapılandırılmadı; RTDB dinleyicisi yeterli.
+    if (Platform.isMacOS || Platform.isWindows) {
+      // Masaüstünde push yapılandırılmadı; RTDB dinleyicisi yeterli.
       return;
     }
 
