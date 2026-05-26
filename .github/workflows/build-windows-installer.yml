@@ -14,6 +14,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Read app version
+        id: version
+        shell: pwsh
+        run: |
+          $line = Get-Content pubspec.yaml | Select-String '^version:\s*(.+)$'
+          if (-not $line) { throw 'pubspec.yaml version not found' }
+          $version = ($line.Line -replace '^version:\s*','').Split('+')[0].Trim()
+          Write-Host "App version: $version"
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
@@ -35,16 +45,31 @@ jobs:
           New-Item -ItemType Directory -Force -Path windows/installer/redist | Out-Null
           Invoke-WebRequest -Uri "https://aka.ms/vs/17/release/vc_redist.x64.exe" -OutFile windows/installer/redist/vc_redist.x64.exe
 
-      - name: Build installer
+      - name: Write installer version file
         shell: pwsh
         run: |
-          $version = ((Get-Content pubspec.yaml | Select-String '^version:\s*(.+)$').Line -replace '^version:\s*','').Split('+')[0].Trim()
-          Write-Host "Installer version: $version"
-          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DMyAppVersion=$version" "windows\installer\directdrop.iss"
+          powershell -ExecutionPolicy Bypass -File scripts/write_installer_version.ps1
+          Get-Content windows/installer/version.iss
+
+      - name: Build installer
+        run: |
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "windows\installer\directdrop.iss"
+
+      - name: Verify installer filename
+        shell: pwsh
+        run: |
+          $expected = "dist/windows/DirectDrop-Setup-${{ steps.version.outputs.version }}.exe"
+          if (-not (Test-Path $expected)) {
+            Write-Host "Beklenen dosya yok: $expected"
+            Write-Host "dist/windows içeriği:"
+            Get-ChildItem dist/windows -ErrorAction SilentlyContinue
+            throw "Installer dosya adı pubspec sürümüyle eşleşmiyor."
+          }
+          Write-Host "OK: $expected"
 
       - name: Upload installer
         uses: actions/upload-artifact@v4
         with:
-          name: DirectDrop-Windows-Setup
+          name: DirectDrop-Setup-${{ steps.version.outputs.version }}
           path: dist/windows/DirectDrop-Setup-*.exe
           if-no-files-found: error

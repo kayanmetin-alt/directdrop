@@ -1,9 +1,8 @@
 ; DirectDrop Windows installer — build with Inno Setup 6 after `flutter build windows --release`
+; Sürüm: scripts/write_installer_version.ps1 → version.iss (CI ve yerel build önce bunu üretir)
 
+#include "version.iss"
 #define MyAppName "DirectDrop"
-#ifndef MyAppVersion
-#define MyAppVersion "1.0.6"
-#endif
 #define MyAppPublisher "DirectDrop"
 #define MyAppExeName "directdrop.exe"
 #define BuildDir "..\..\build\windows\x64\runner\Release"
