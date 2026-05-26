@@ -11,8 +11,8 @@ import 'firebase_options.dart';
 import 'models/paired_device.dart';
 import 'screens/home_screen.dart';
 import 'screens/incoming_connect_screen.dart';
-import 'services/active_session_registry.dart';
 import 'services/device_registry_service.dart';
+import 'services/download_directory_service.dart';
 import 'services/notification_service.dart';
 import 'services/paired_auto_connect_service.dart';
 import 'services/paired_presence_service.dart';
@@ -28,29 +28,38 @@ Future<void> main() async {
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
-  FirebaseDatabase.instance.setPersistenceEnabled(false);
+  try {
+    FirebaseDatabase.instance.setPersistenceEnabled(false);
+  } catch (e) {
+    debugPrint('Firebase persistence kapatılamadı: $e');
+  }
   if (Platform.isIOS || Platform.isAndroid) {
     FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
   }
 
   await NotificationService.instance.initialize();
   try {
-    final registry = DeviceRegistryService();
-    await registry.registerCurrentDevice();
-    registry.startHeartbeat();
-    await PairedDevicesService.instance.load();
-    await TransferHistoryService.instance.load();
-    await PairedPresenceService.instance.start();
-    await PairedAutoConnectService.instance.start();
-    WakeListenerService.instance.setHandler(_handleWakeRequest);
-    NotificationService.instance.onWakeNotificationTapped = _handleWakeRequest;
-    await WakeListenerService.instance.start();
-    await WakeListenerService.instance.processPendingRequests();
-  } catch (e) {
-    debugPrint('Cihaz kaydı/bağlantı dinleyicisi başlatılamadı: $e');
+    await _startDirectDropServices();
+  } catch (e, stack) {
+    debugPrint('DirectDrop servisleri başlatılamadı: $e\n$stack');
   }
 
   runApp(const DirectDropApp());
+}
+
+Future<void> _startDirectDropServices() async {
+  final registry = DeviceRegistryService();
+  await registry.registerCurrentDevice();
+  registry.startHeartbeat();
+  await PairedDevicesService.instance.load();
+  await TransferHistoryService.instance.load();
+  await DownloadDirectoryService.instance.load();
+  await PairedPresenceService.instance.start();
+  await PairedAutoConnectService.instance.start();
+  WakeListenerService.instance.setHandler(_handleWakeRequest);
+  NotificationService.instance.onWakeNotificationTapped = _handleWakeRequest;
+  await WakeListenerService.instance.start();
+  await WakeListenerService.instance.processPendingRequests();
 }
 
 void _handleWakeRequest(WakeRequest request) {
@@ -117,14 +126,14 @@ class _DirectDropAppState extends State<DirectDropApp> with WidgetsBindingObserv
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.detached) {
-      unawaited(_goOffline());
-    } else if (state == AppLifecycleState.resumed) {
+    if (state == AppLifecycleState.resumed) {
       unawaited(_goOnline());
     } else if (!_isDesktop &&
         (state == AppLifecycleState.paused ||
-            state == AppLifecycleState.hidden)) {
-      // iOS/Android: arka planda çevrimdışı say.
+            state == AppLifecycleState.hidden ||
+            state == AppLifecycleState.detached)) {
+      // Mobilde arka plana geçince yalnızca çevrimdışı işaretle.
+      // Dinleyicileri kapatma — yeniden açılışta çökme/yarım durum oluşabiliyor.
       unawaited(_markOffline());
     }
   }
@@ -135,22 +144,18 @@ class _DirectDropAppState extends State<DirectDropApp> with WidgetsBindingObserv
   }
 
   Future<void> _goOnline() async {
-    await _registry.registerCurrentDevice();
-    _registry.startHeartbeat();
-    await PairedPresenceService.instance.start();
-    await PairedAutoConnectService.instance.start();
-    PairedAutoConnectService.instance.onAppResumed();
-    await WakeListenerService.instance.start();
-    unawaited(WakeListenerService.instance.processPendingRequests());
-    unawaited(PairedAutoConnectService.instance.processPendingInvites());
-  }
-
-  Future<void> _goOffline() async {
-    _registry.stopHeartbeat();
-    await _registry.setOnline(false);
-    await ActiveSessionRegistry.instance.disconnectActive();
-    await PairedAutoConnectService.instance.stop();
-    await PairedPresenceService.instance.stop();
+    try {
+      await _registry.registerCurrentDevice();
+      _registry.startHeartbeat();
+      await PairedPresenceService.instance.ensureRunning();
+      await PairedAutoConnectService.instance.ensureRunning();
+      PairedAutoConnectService.instance.onAppResumed();
+      await WakeListenerService.instance.ensureRunning();
+      unawaited(WakeListenerService.instance.processPendingRequests());
+      unawaited(PairedAutoConnectService.instance.processPendingInvites());
+    } catch (e, stack) {
+      debugPrint('Uygulama ön plana dönerken hata: $e\n$stack');
+    }
   }
 
   @override

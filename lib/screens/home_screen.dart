@@ -12,6 +12,7 @@ import 'host_screen.dart';
 import 'join_screen.dart';
 import 'paired_connect_screen.dart';
 import 'transfer_screen.dart';
+import '../widgets/download_location_settings.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -280,6 +281,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 icon: const Icon(Icons.download),
                 label: const Text('Koda Katıl'),
               ),
+              const SizedBox(height: 20),
+              const DownloadLocationSettings(),
               const SizedBox(height: 20),
               Text(
                 'Eşleşmiş cihazlar',

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../models/transfer_file.dart';
+import '../utils/file_location_opener.dart';
 
 class TransferProgressTile extends StatelessWidget {
   const TransferProgressTile({
@@ -57,6 +58,37 @@ class TransferProgressTile extends StatelessWidget {
     return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB';
   }
 
+  Future<void> _revealSavedLocation(BuildContext context) async {
+    final path = item.localPath;
+    if (path == null || !File(path).existsSync()) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Dosya bulunamadı.')),
+      );
+      return;
+    }
+
+    final opened = await FileLocationOpener.revealSavedFile(path);
+    if (!context.mounted) return;
+    if (!opened) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Dosya konumu açılamadı.')),
+      );
+    }
+  }
+
+  String get _revealTooltip {
+    if (Platform.isIOS) return 'Dosyayı aç';
+    if (Platform.isAndroid) return 'Dosyayı aç';
+    return 'Kayıt klasörünü aç';
+  }
+
+  IconData get _revealIcon {
+    if (Platform.isIOS || Platform.isAndroid) {
+      return Icons.open_in_new;
+    }
+    return Icons.folder_open_outlined;
+  }
+
   Future<void> _shareFile(BuildContext context) async {
     final path = item.localPath;
     if (path == null || !File(path).existsSync()) {
@@ -106,12 +138,19 @@ class TransferProgressTile extends StatelessWidget {
                 ),
                 if (item.status == TransferStatus.completed &&
                     item.localPath != null &&
-                    item.direction == TransferDirection.receiving)
+                    item.direction == TransferDirection.receiving) ...[
                   IconButton(
-                    onPressed: () => _shareFile(context),
-                    icon: const Icon(Icons.ios_share),
-                    tooltip: 'Dosyayı paylaş / kaydet',
+                    onPressed: () => _revealSavedLocation(context),
+                    icon: Icon(_revealIcon),
+                    tooltip: _revealTooltip,
                   ),
+                  if (Platform.isIOS)
+                    IconButton(
+                      onPressed: () => _shareFile(context),
+                      icon: const Icon(Icons.ios_share),
+                      tooltip: 'Dosyayı paylaş',
+                    ),
+                ],
               ],
             ),
             if (item.status == TransferStatus.inProgress ||

@@ -76,6 +76,20 @@ class PairedAutoConnectService extends ChangeNotifier {
     _scheduleSync();
   }
 
+  /// Ön plana dönüşte dinleyicileri ve senkronu yenile.
+  Future<void> ensureRunning() async {
+    if (!_started) {
+      await start();
+      return;
+    }
+
+    _myDeviceId ??= await DeviceIdentityService.instance.getDeviceId();
+    await _startInviteListener();
+    _startPeriodicSync();
+    await processPendingInvites();
+    _scheduleSync(immediate: true);
+  }
+
   void onAppResumed() {
     if (!_started) return;
     _scheduleSync(immediate: true);

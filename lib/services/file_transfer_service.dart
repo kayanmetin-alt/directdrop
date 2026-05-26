@@ -6,11 +6,11 @@ import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
 import 'package:uuid/uuid.dart';
 
 import '../models/transfer_file.dart';
 import '../utils/file_hasher.dart';
+import 'download_directory_service.dart';
 import 'webrtc_service.dart';
 
 class TransferRejectedException implements Exception {
@@ -313,12 +313,8 @@ class FileTransferService {
     final fileId = pending.item.id;
     final name = pending.item.name;
 
-    final dir = await getApplicationDocumentsDirectory();
     final downloadsDir =
-        Directory(p.join(dir.path, 'DirectDrop', 'Downloads'));
-    if (!await downloadsDir.exists()) {
-      await downloadsDir.create(recursive: true);
-    }
+        await DownloadDirectoryService.instance.ensureDownloadsDirectory();
 
     final safeName = _safeFileName(name);
     final localPath = p.join(

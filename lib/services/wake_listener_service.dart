@@ -38,6 +38,10 @@ class WakeListenerService {
     await _processPending(ref);
   }
 
+  Future<void> ensureRunning() async {
+    await start();
+  }
+
   Future<void> processPendingRequests() async {
     final deviceId = await DeviceIdentityService.instance.getDeviceId();
     final ref = FirebaseDatabase.instance

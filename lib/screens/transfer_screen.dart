@@ -9,6 +9,8 @@ import '../providers/transfer_session_controller.dart';
 import '../services/webrtc_service.dart';
 import '../services/transfer_history_service.dart';
 import '../widgets/active_transfer_tile.dart';
+import '../widgets/desktop_file_drop_overlay.dart';
+import '../widgets/download_location_settings.dart';
 import '../widgets/transfer_history_tile.dart';
 import '../widgets/transfer_progress_tile.dart';
 
@@ -93,6 +95,23 @@ class _TransferScreenState extends State<TransferScreen>
       try {
         await channel.invokeMethod<void>('activate');
       } catch (_) {}
+    }
+  }
+
+  Future<void> _sendPaths(List<String> paths) async {
+    if (paths.isEmpty) return;
+
+    setState(() {
+      _sending = true;
+      _error = null;
+    });
+
+    try {
+      await _controller.sendFilePaths(paths);
+    } catch (e) {
+      setState(() => _error = e.toString());
+    } finally {
+      if (mounted) setState(() => _sending = false);
     }
   }
 
@@ -250,11 +269,14 @@ class _TransferScreenState extends State<TransferScreen>
               ),
             ],
           ),
-          body: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
+          body: DesktopFileDropOverlay(
+            enabled: _controller.isConnected && !_sending,
+            onFilesDropped: _sendPaths,
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
                 Card(
                   child: ListTile(
                     leading: _controller.isReconnecting
@@ -324,6 +346,19 @@ class _TransferScreenState extends State<TransferScreen>
                       : const Icon(Icons.attach_file),
                   label: const Text('Dosya Gönder'),
                 ),
+                if (DesktopFileDropOverlay.isSupported &&
+                    _controller.isConnected) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    'veya dosyaları bu pencereye sürükleyip bırakın',
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: Theme.of(context)
+                              .colorScheme
+                              .onSurfaceVariant,
+                        ),
+                  ),
+                ],
                 if (_error != null) ...[
                   const SizedBox(height: 8),
                   Text(
@@ -333,6 +368,8 @@ class _TransferScreenState extends State<TransferScreen>
                     ),
                   ),
                 ],
+                const SizedBox(height: 12),
+                const DownloadLocationSettings(),
                 const SizedBox(height: 16),
                 Row(
                   children: [
@@ -371,6 +408,7 @@ class _TransferScreenState extends State<TransferScreen>
               ],
             ),
           ),
+        ),
         );
       },
     );

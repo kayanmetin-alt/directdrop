@@ -36,6 +36,16 @@ class PairedPresenceService extends ChangeNotifier {
     _startStaleCheck();
   }
 
+  /// Uygulama ön plana döndüğünde abonelikleri yenile.
+  Future<void> ensureRunning() async {
+    if (!_started) {
+      await start();
+      return;
+    }
+    await _refreshSubscriptions();
+    _startStaleCheck();
+  }
+
   void _startStaleCheck() {
     _staleCheckTimer?.cancel();
     _staleCheckTimer = Timer.periodic(const Duration(seconds: 5), (_) {
