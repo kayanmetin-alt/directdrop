@@ -1,0 +1,96 @@
+platform :osx, '10.15'
+
+# CocoaPods analytics sends network stats synchronously affecting flutter build latency.
+ENV['COCOAPODS_DISABLE_STATS'] = 'true'
+
+project 'Runner', {
+  'Debug' => :debug,
+  'Profile' => :release,
+  'Release' => :release,
+}
+
+def flutter_root
+  generated_xcode_build_settings_path = File.expand_path(File.join('..', 'Flutter', 'ephemeral', 'Flutter-Generated.xcconfig'), __FILE__)
+  unless File.exist?(generated_xcode_build_settings_path)
+    raise "#{generated_xcode_build_settings_path} must exist. If you're running pod install manually, make sure \"flutter pub get\" is executed first"
+  end
+
+  File.foreach(generated_xcode_build_settings_path) do |line|
+    matches = line.match(/FLUTTER_ROOT\=(.*)/)
+    return matches[1].strip if matches
+  end
+  raise "FLUTTER_ROOT not found in #{generated_xcode_build_settings_path}. Try deleting Flutter-Generated.xcconfig, then run \"flutter pub get\""
+end
+
+require File.expand_path(File.join('packages', 'flutter_tools', 'bin', 'podhelper'), flutter_root)
+
+flutter_macos_podfile_setup
+
+target 'Runner' do
+  use_frameworks!
+
+  flutter_install_all_macos_pods File.dirname(File.realpath(__FILE__))
+  target 'RunnerTests' do
+    inherit! :search_paths
+  end
+end
+
+def remove_unsupported_flags(build_settings)
+  %w[OTHER_CFLAGS OTHER_CPLUSPLUSFLAGS OTHER_LDFLAGS].each do |key|
+    next unless build_settings[key]
+    if build_settings[key].is_a?(Array)
+      build_settings[key].reject! { |f| f == '-GCC_WARN_INHIBIT_ALL_WARNINGS' }
+    elsif build_settings[key].is_a?(String)
+      build_settings[key] = build_settings[key].gsub(/\s*-GCC_WARN_INHIBIT_ALL_WARNINGS\b/, '').strip
+    end
+  end
+end
+
+def normalize_warning_flags(build_settings)
+  %w[OTHER_CFLAGS OTHER_CPLUSPLUSFLAGS].each do |key|
+    next unless build_settings[key]
+    flags = build_settings[key]
+    if flags.is_a?(Array)
+      flags.reject! { |f| f == '-Werror' }
+      flags << '-Wno-error=missing-template-arg-list-after-template-kw'
+    elsif flags.is_a?(String)
+      cleaned = flags.gsub(/\s*-Werror\b/, '').strip
+      unless cleaned.include?('-Wno-error=missing-template-arg-list-after-template-kw')
+        cleaned = "#{cleaned} -Wno-error=missing-template-arg-list-after-template-kw".strip
+      end
+      build_settings[key] = cleaned
+    end
+  end
+end
+
+post_install do |installer|
+  installer.pods_project.targets.each do |target|
+    flutter_additional_macos_build_settings(target)
+    target.build_configurations.each do |config|
+      config.build_settings['MACOSX_DEPLOYMENT_TARGET'] = '10.15'
+      remove_unsupported_flags(config.build_settings)
+      normalize_warning_flags(config.build_settings)
+    end
+  end
+
+  # BoringSSL-GRPC bazı Xcode sürümlerinde geçersiz bir derleyici bayrağı üretiyor.
+  installer.pods_project.targets.each do |target|
+    next unless target.respond_to?(:source_build_phase)
+    next if target.source_build_phase.nil?
+    target.source_build_phase.files.each do |file|
+      next unless file.settings && file.settings['COMPILER_FLAGS']
+      flags = file.settings['COMPILER_FLAGS']
+      next unless flags.is_a?(String)
+      updated = flags.gsub(/\s*-GCC_WARN_INHIBIT_ALL_WARNINGS\b/, '')
+      updated = updated.gsub(/\s*-Werror\b/, '')
+      unless updated.include?('-Wno-error=missing-template-arg-list-after-template-kw')
+        updated = "#{updated} -Wno-error=missing-template-arg-list-after-template-kw"
+      end
+      file.settings['COMPILER_FLAGS'] = updated.strip
+    end
+  end
+
+  installer.pods_project.build_configurations.each do |config|
+    config.build_settings['MACOSX_DEPLOYMENT_TARGET'] = '10.15'
+  end
+end

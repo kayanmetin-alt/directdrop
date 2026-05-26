@@ -1,0 +1,25 @@
+# Flutter
+.dart_tool/
+.packages
+build/
+*.iml
+.flutter-plugins
+.flutter-plugins-dependencies
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Windows installer output
+dist/
+
+# Env
+.env
+.env.*
+*.keystore

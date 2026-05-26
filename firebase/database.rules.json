@@ -1,0 +1,29 @@
+{
+  "rules": {
+    "rooms": {
+      "$roomCode": {
+        ".read": true,
+        ".write": true,
+        ".indexOn": ["createdAt"],
+        "signaling": {
+          "$peerId": {
+            ".read": true,
+            ".write": true
+          }
+        }
+      }
+    },
+    "devices": {
+      "$deviceId": {
+        ".read": true,
+        ".write": true,
+        "wakeRequests": {
+          "$requestId": {
+            ".read": true,
+            ".write": true
+          }
+        }
+      }
+    }
+  }
+}

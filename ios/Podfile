@@ -1,0 +1,91 @@
+# Uncomment this line to define a global platform for your project
+platform :ios, '15.5'
+
+# CocoaPods analytics sends network stats synchronously affecting flutter build latency.
+ENV['COCOAPODS_DISABLE_STATS'] = 'true'
+
+project 'Runner', {
+  'Debug' => :debug,
+  'Profile' => :release,
+  'Release' => :release,
+}
+
+def flutter_root
+  generated_xcode_build_settings_path = File.expand_path(File.join('..', 'Flutter', 'Generated.xcconfig'), __FILE__)
+  unless File.exist?(generated_xcode_build_settings_path)
+    raise "#{generated_xcode_build_settings_path} must exist. If you're running pod install manually, make sure flutter pub get is executed first"
+  end
+
+  File.foreach(generated_xcode_build_settings_path) do |line|
+    matches = line.match(/FLUTTER_ROOT\=(.*)/)
+    return matches[1].strip if matches
+  end
+  raise "FLUTTER_ROOT not found in #{generated_xcode_build_settings_path}. Try deleting Generated.xcconfig, then run flutter pub get"
+end
+
+require File.expand_path(File.join('packages', 'flutter_tools', 'bin', 'podhelper'), flutter_root)
+
+flutter_ios_podfile_setup
+
+target 'Runner' do
+  use_frameworks! :linkage => :static
+  use_modular_headers!
+
+  flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
+  target 'RunnerTests' do
+    inherit! :search_paths
+  end
+end
+
+post_install do |installer|
+  installer.pods_project.targets.each do |target|
+    flutter_additional_ios_build_settings(target)
+    target.build_configurations.each do |config|
+      config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.5'
+      config.build_settings['CLANG_ALLOW_NON_MODULAR_INCLUDES_IN_FRAMEWORK_MODULES'] = 'YES'
+      %w[OTHER_CFLAGS OTHER_CPLUSPLUSFLAGS OTHER_LDFLAGS].each do |key|
+        next unless config.build_settings[key]
+        if config.build_settings[key].is_a?(Array)
+          config.build_settings[key].reject! { |f| f == '-GCC_WARN_INHIBIT_ALL_WARNINGS' || f == '-Werror' }
+          config.build_settings[key] << '-Wno-error=missing-template-arg-list-after-template-kw'
+        elsif config.build_settings[key].is_a?(String)
+          value = config.build_settings[key]
+          value = value.gsub(/\s*-GCC_WARN_INHIBIT_ALL_WARNINGS\b/, '')
+          value = value.gsub(/\s*-Werror\b/, '')
+          unless value.include?('-Wno-error=missing-template-arg-list-after-template-kw')
+            value = "#{value} -Wno-error=missing-template-arg-list-after-template-kw"
+          end
+          config.build_settings[key] = value.strip
+        end
+      end
+    end
+  end
+
+  # BoringSSL-GRPC kaynak dosyalarında gelen gecersiz compiler flag duzeltmesi
+  installer.pods_project.targets.each do |target|
+    next unless target.respond_to?(:source_build_phase)
+    next if target.source_build_phase.nil?
+    target.source_build_phase.files.each do |file|
+      next unless file.settings && file.settings['COMPILER_FLAGS']
+      flags = file.settings['COMPILER_FLAGS']
+      next unless flags.is_a?(String)
+      updated = flags.gsub(/\s*-GCC_WARN_INHIBIT_ALL_WARNINGS\b/, '')
+      updated = updated.gsub(/\s*-Werror\b/, '')
+      unless updated.include?('-Wno-error=missing-template-arg-list-after-template-kw')
+        updated = "#{updated} -Wno-error=missing-template-arg-list-after-template-kw"
+      end
+      file.settings['COMPILER_FLAGS'] = updated.strip
+    end
+  end
+
+  # Runner target'inda da non-modular include izni gerekli (firebase_messaging icin)
+  installer.aggregate_targets.each do |aggregate_target|
+    aggregate_target.user_project.native_targets.each do |native_target|
+      native_target.build_configurations.each do |config|
+        config.build_settings['CLANG_ALLOW_NON_MODULAR_INCLUDES_IN_FRAMEWORK_MODULES'] = 'YES'
+        config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.5'
+      end
+    end
+    aggregate_target.user_project.save
+  end
+end

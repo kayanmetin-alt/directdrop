@@ -1,0 +1,623 @@
+import 'dart:async';
+
+import 'package:flutter/foundation.dart';
+import 'package:uuid/uuid.dart';
+
+import '../models/paired_device.dart';
+import '../models/room.dart';
+import '../models/signaling_message.dart';
+import '../models/transfer_file.dart';
+import '../utils/room_code_generator.dart';
+import '../services/device_identity_service.dart';
+import '../services/device_registry_service.dart';
+import '../services/file_transfer_service.dart';
+import '../services/firebase_signaling_service.dart';
+import '../services/paired_devices_service.dart';
+import '../services/transfer_history_service.dart';
+import '../services/webrtc_service.dart';
+
+class TransferSessionController extends ChangeNotifier {
+  TransferSessionController({
+    FirebaseSignalingService? signaling,
+    DeviceRegistryService? deviceRegistry,
+  })  : _signaling = signaling ?? FirebaseSignalingService(),
+        _deviceRegistry = deviceRegistry ?? DeviceRegistryService();
+
+  static const _uuid = Uuid();
+
+  final FirebaseSignalingService _signaling;
+  final DeviceRegistryService _deviceRegistry;
+  WebRtcService? _webRtc;
+  FileTransferService? _fileTransfer;
+
+  RoomSession? _session;
+  WebRtcConnectionState _connectionState = WebRtcConnectionState.idle;
+  String? _errorMessage;
+  bool _busy = false;
+  bool _disposed = false;
+  bool _disconnecting = false;
+  bool _reconnecting = false;
+  bool _pairSaved = false;
+  bool _wasBackgrounded = false;
+  int _guestWaitGeneration = 0;
+  DateTime? _lastReconnectAt;
+  Timer? _deferredReconnectTimer;
+  StreamSubscription<WebRtcConnectionState>? _connectionSubscription;
+  StreamSubscription<List<TransferFileItem>>? _transferSubscription;
+
+  String? peerDeviceId;
+  String? peerDisplayName;
+  final Set<String> _persistedTransferIds = {};
+
+  RoomSession? get session => _session;
+  WebRtcConnectionState get connectionState => _connectionState;
+  String? get errorMessage => _errorMessage;
+  bool get isBusy => _busy;
+  bool get isReconnecting => _reconnecting;
+  bool get isConnected =>
+      _connectionState == WebRtcConnectionState.connected &&
+      (_webRtc?.isDataChannelOpen ?? false);
+  bool get isPaired => _session?.remotePeerId != null;
+  FileTransferService? get fileTransfer => _fileTransfer;
+
+  void bindPeer({required String deviceId, required String displayName}) {
+    peerDeviceId = deviceId;
+    peerDisplayName = displayName;
+  }
+
+  Future<void> acceptIncomingFile(String fileId) async {
+    await _fileTransfer?.acceptIncoming(fileId);
+  }
+
+  Future<void> rejectIncomingFile(String fileId) async {
+    await _fileTransfer?.rejectIncoming(fileId);
+  }
+
+  List<TransferFileItem> get awaitingApprovalFiles =>
+      _fileTransfer?.awaitingApprovalItems ?? const [];
+
+  String get deviceName => DeviceIdentityService.instance.displayName;
+
+  Future<String> _persistentDeviceId() =>
+      DeviceIdentityService.instance.getDeviceId();
+
+  Future<RoomSession> createRoom() async {
+    _setBusy(true);
+    _pairSaved = false;
+    try {
+      final peerId = _uuid.v4();
+      final roomCode = RoomCodeGenerator.generate();
+      final persistentId = await _persistentDeviceId();
+      await _signaling.createRoom(
+        roomCode: roomCode,
+        hostPeerId: peerId,
+        deviceName: deviceName,
+        persistentDeviceId: persistentId,
+      );
+
+      _session = RoomSession(
+        roomCode: roomCode,
+        peerId: peerId,
+        role: PeerRole.host,
+        deviceName: deviceName,
+      );
+
+      _signaling.listenForMessages(
+        roomCode: roomCode,
+        localPeerId: peerId,
+        onMessage: _onSignalingMessage,
+      );
+
+      _waitForGuest(roomCode, peerId);
+      notifyListeners();
+      return _session!;
+    } catch (e) {
+      _errorMessage = e.toString();
+      notifyListeners();
+      rethrow;
+    } finally {
+      _setBusy(false);
+    }
+  }
+
+  Future<void> _waitForGuest(String roomCode, String hostPeerId) async {
+    final waitGeneration = ++_guestWaitGeneration;
+    final deadline = DateTime.now().add(const Duration(seconds: 90));
+
+    while (!_disposed &&
+        waitGeneration == _guestWaitGeneration &&
+        _session != null &&
+        _webRtc == null) {
+      if (DateTime.now().isAfter(deadline)) {
+        debugPrint('Misafir katılımı zaman aşımına uğradı.');
+        _errorMessage = 'Karşı cihaz katılmadı.';
+        if (!_disposed) notifyListeners();
+        return;
+      }
+
+      final guestPeerId = await _signaling.getGuestPeerId(roomCode);
+      if (_disposed || waitGeneration != _guestWaitGeneration) return;
+
+      if (guestPeerId != null) {
+        _session = _session!.copyWith(remotePeerId: guestPeerId);
+        await _startWebRtc(
+          remotePeerId: guestPeerId,
+          isInitiator: true,
+        );
+        unawaited(_persistPairIfNeeded());
+        break;
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+    }
+  }
+
+  Future<RoomSession> joinRoom(String roomCode) async {
+    _setBusy(true);
+    _pairSaved = false;
+    try {
+      final normalizedCode = roomCode.trim().toUpperCase();
+      final peerId = _uuid.v4();
+      final persistentId = await _persistentDeviceId();
+      await _signaling.joinRoom(
+        roomCode: normalizedCode,
+        guestPeerId: peerId,
+        deviceName: deviceName,
+        persistentDeviceId: persistentId,
+      );
+
+      final hostPeerId = await _signaling.getHostPeerId(normalizedCode);
+      if (hostPeerId == null) {
+        throw StateError('Oda sahibi bulunamadı.');
+      }
+
+      _session = RoomSession(
+        roomCode: normalizedCode,
+        peerId: peerId,
+        role: PeerRole.guest,
+        remotePeerId: hostPeerId,
+        deviceName: deviceName,
+      );
+
+      _signaling.listenForMessages(
+        roomCode: normalizedCode,
+        localPeerId: peerId,
+        onMessage: _onSignalingMessage,
+      );
+
+      await _startWebRtc(
+        remotePeerId: hostPeerId,
+        isInitiator: false,
+      );
+
+      unawaited(_persistPairIfNeeded());
+      notifyListeners();
+      return _session!;
+    } catch (e) {
+      _errorMessage = e.toString();
+      notifyListeners();
+      rethrow;
+    } finally {
+      _setBusy(false);
+    }
+  }
+
+  Future<RoomSession> connectToPairedDevice(
+    PairedDevice peer, {
+    WakeRequestType wakeType = WakeRequestType.connect,
+  }) async {
+    _setBusy(true);
+    _pairSaved = false;
+    try {
+      final peerId = _uuid.v4();
+      final roomCode = RoomCodeGenerator.generate();
+      final persistentId = await _persistentDeviceId();
+
+      await _signaling.createRoom(
+        roomCode: roomCode,
+        hostPeerId: peerId,
+        deviceName: deviceName,
+        persistentDeviceId: persistentId,
+      );
+
+      _session = RoomSession(
+        roomCode: roomCode,
+        peerId: peerId,
+        role: PeerRole.host,
+        deviceName: deviceName,
+      );
+
+      _signaling.listenForMessages(
+        roomCode: roomCode,
+        localPeerId: peerId,
+        onMessage: _onSignalingMessage,
+      );
+
+      await _deviceRegistry.sendWakeRequest(
+        targetDeviceId: peer.deviceId,
+        request: WakeRequest(
+          roomCode: roomCode,
+          fromDeviceId: persistentId,
+          fromDeviceName: deviceName,
+          type: wakeType,
+          createdAt: DateTime.now().millisecondsSinceEpoch,
+        ),
+      );
+
+      await _deviceRegistry.sendPairInvite(
+        targetDeviceId: peer.deviceId,
+        fromDeviceId: persistentId,
+        fromDeviceName: deviceName,
+        roomCode: roomCode,
+      );
+
+      _waitForGuest(roomCode, peerId);
+      notifyListeners();
+      return _session!;
+    } catch (e) {
+      _errorMessage = e.toString();
+      notifyListeners();
+      rethrow;
+    } finally {
+      _setBusy(false);
+    }
+  }
+
+  /// Uygulama açıkken eşleşmiş cihaza doğrudan davet gönderir (wake yerine).
+  Future<RoomSession> hostPairInvite(PairedDevice peer) async {
+    _setBusy(true);
+    _pairSaved = false;
+    try {
+      final peerId = _uuid.v4();
+      final roomCode = RoomCodeGenerator.generate();
+      final persistentId = await _persistentDeviceId();
+
+      await _signaling.createRoom(
+        roomCode: roomCode,
+        hostPeerId: peerId,
+        deviceName: deviceName,
+        persistentDeviceId: persistentId,
+      );
+
+      _session = RoomSession(
+        roomCode: roomCode,
+        peerId: peerId,
+        role: PeerRole.host,
+        deviceName: deviceName,
+      );
+
+      _signaling.listenForMessages(
+        roomCode: roomCode,
+        localPeerId: peerId,
+        onMessage: _onSignalingMessage,
+      );
+
+      await _deviceRegistry.sendPairInvite(
+        targetDeviceId: peer.deviceId,
+        fromDeviceId: persistentId,
+        fromDeviceName: deviceName,
+        roomCode: roomCode,
+      );
+
+      _waitForGuest(roomCode, peerId);
+      notifyListeners();
+      return _session!;
+    } catch (e) {
+      _errorMessage = e.toString();
+      notifyListeners();
+      rethrow;
+    } finally {
+      _setBusy(false);
+    }
+  }
+
+  Future<RoomSession> joinFromWake(WakeRequest request) =>
+      joinRoom(request.roomCode);
+
+  Future<void> _persistPairIfNeeded() async {
+    if (_pairSaved || _session == null || _disposed) return;
+
+    final session = _session!;
+    final myId = await _persistentDeviceId();
+    String? remoteId;
+    String? remoteName;
+
+    if (session.role == PeerRole.host) {
+      remoteId = await _signaling.getGuestPersistentId(session.roomCode);
+      remoteName = await _signaling.getGuestDeviceName(session.roomCode);
+    } else {
+      remoteId = await _signaling.getHostPersistentId(session.roomCode);
+      remoteName = await _signaling.getHostDeviceName(session.roomCode);
+    }
+
+    if (remoteId == null || remoteId.isEmpty || remoteId == myId) return;
+
+    await PairedDevicesService.instance.savePair(
+      deviceId: remoteId,
+      displayName: remoteName ?? 'Cihaz',
+      platform: 'unknown',
+    );
+    _pairSaved = true;
+  }
+
+  Future<void> _startWebRtc({
+    required String remotePeerId,
+    required bool isInitiator,
+  }) async {
+    final session = _session!;
+    _webRtc = WebRtcService(
+      signaling: _signaling,
+      localPeerId: session.peerId,
+      remotePeerId: remotePeerId,
+      isInitiator: isInitiator,
+    );
+
+    await _connectionSubscription?.cancel();
+    _connectionSubscription = _webRtc!.connectionState.listen(_onConnectionStateChanged);
+
+    await _webRtc!.initialize();
+    _fileTransfer = FileTransferService(webRtc: _webRtc!);
+    await _transferSubscription?.cancel();
+    _transferSubscription = _fileTransfer!.transfers.listen((items) {
+      if (!_disposed) notifyListeners();
+      unawaited(_persistCompletedTransfers(items));
+    });
+  }
+
+  Future<void> _persistCompletedTransfers(List<TransferFileItem> items) async {
+    await _ensurePeerInfo();
+    final peerId = peerDeviceId;
+    final peerName = peerDisplayName ?? 'Cihaz';
+    if (peerId == null) return;
+
+    for (final item in items) {
+      if (!_isTerminalStatus(item.status)) continue;
+      if (_persistedTransferIds.contains(item.id)) continue;
+      _persistedTransferIds.add(item.id);
+      await TransferHistoryService.instance.addFromTransfer(
+        item: item,
+        peerDeviceId: peerId,
+        peerName: peerName,
+      );
+    }
+  }
+
+  bool _isTerminalStatus(TransferStatus status) {
+    return status == TransferStatus.completed ||
+        status == TransferStatus.failed ||
+        status == TransferStatus.cancelled;
+  }
+
+  Future<void> _ensurePeerInfo() async {
+    if (peerDeviceId != null) return;
+    if (_session == null) return;
+
+    final myId = await _persistentDeviceId();
+    String? remoteId;
+    String? remoteName;
+
+    if (_session!.role == PeerRole.host) {
+      remoteId = await _signaling.getGuestPersistentId(_session!.roomCode);
+      remoteName = await _signaling.getGuestDeviceName(_session!.roomCode);
+    } else {
+      remoteId = await _signaling.getHostPersistentId(_session!.roomCode);
+      remoteName = await _signaling.getHostDeviceName(_session!.roomCode);
+    }
+
+    if (remoteId == null || remoteId.isEmpty || remoteId == myId) return;
+
+    peerDeviceId = remoteId;
+    peerDisplayName = remoteName ?? 'Cihaz';
+  }
+
+  void markBackgrounded() {
+    _wasBackgrounded = true;
+  }
+
+  void onAppResumed() {
+    if (!_wasBackgrounded) return;
+    _wasBackgrounded = false;
+
+    // ICE bazen kendi kendine toparlanır; hemen yeniden kurmayı bekle.
+    _deferredReconnectTimer?.cancel();
+    _deferredReconnectTimer = Timer(const Duration(seconds: 2), () {
+      unawaited(reconnectIfNeeded());
+    });
+  }
+
+  void _onConnectionStateChanged(WebRtcConnectionState state) {
+    _connectionState = state;
+
+    if (state == WebRtcConnectionState.connected) {
+      _deferredReconnectTimer?.cancel();
+      unawaited(_persistPairIfNeeded());
+    } else if (state == WebRtcConnectionState.disconnected ||
+        state == WebRtcConnectionState.failed) {
+      _scheduleDeferredReconnect();
+    }
+
+    if (!_disposed) notifyListeners();
+  }
+
+  void _scheduleDeferredReconnect() {
+    if (_reconnecting || _wasBackgrounded) return;
+
+    _deferredReconnectTimer?.cancel();
+    _deferredReconnectTimer = Timer(const Duration(seconds: 4), () {
+      unawaited(reconnectIfNeeded());
+    });
+  }
+
+  Future<void> reconnectIfNeeded() async {
+    if (_disposed || !isPaired) return;
+    if (_reconnecting) return;
+
+    final channelOpen = _webRtc?.isDataChannelOpen ?? false;
+    if (isConnected && channelOpen) return;
+
+    final lastAttempt = _lastReconnectAt;
+    if (lastAttempt != null &&
+        DateTime.now().difference(lastAttempt) < const Duration(seconds: 5)) {
+      return;
+    }
+
+    _lastReconnectAt = DateTime.now();
+    _deferredReconnectTimer?.cancel();
+    _reconnecting = true;
+    _errorMessage = null;
+    _connectionState = WebRtcConnectionState.connecting;
+    notifyListeners();
+
+    try {
+      await _connectionSubscription?.cancel();
+      await _fileTransfer?.dispose();
+      await _webRtc?.dispose();
+      _fileTransfer = null;
+      _webRtc = null;
+
+      await _signaling.clearSignaling();
+
+      final session = _session!;
+      final isInitiator = session.role == PeerRole.host;
+
+      // Konuk önce hazır olsun; ev sahibi yeni teklif gönderir.
+      if (isInitiator) {
+        await Future<void>.delayed(const Duration(milliseconds: 800));
+      }
+
+      if (_disposed || _session == null) return;
+
+      await _startWebRtc(
+        remotePeerId: session.remotePeerId!,
+        isInitiator: isInitiator,
+      );
+
+      await _signaling.replayPendingMessages(
+        localPeerId: session.peerId,
+        onMessage: _onSignalingMessage,
+      );
+    } catch (e) {
+      _errorMessage = e.toString();
+      _connectionState = WebRtcConnectionState.failed;
+    } finally {
+      _reconnecting = false;
+      if (!_disposed) notifyListeners();
+    }
+  }
+
+  Future<void> _onSignalingMessage(SignalingMessage message) async {
+    if (message.type == SignalingType.offer &&
+        _session?.role == PeerRole.guest &&
+        !_reconnecting &&
+        (_webRtc == null ||
+            _connectionState == WebRtcConnectionState.failed ||
+            _connectionState == WebRtcConnectionState.disconnected)) {
+      await _restartWebRtcForIncomingOffer();
+      await _webRtc?.handleSignalingMessage(message);
+      return;
+    }
+
+    try {
+      await _webRtc?.handleSignalingMessage(message);
+    } catch (e) {
+      debugPrint('Signaling mesajı işlenemedi: $e');
+    }
+  }
+
+  Future<void> _restartWebRtcForIncomingOffer() async {
+    if (_disposed || _session?.remotePeerId == null) return;
+
+    _deferredReconnectTimer?.cancel();
+    await _connectionSubscription?.cancel();
+    await _fileTransfer?.dispose();
+    await _webRtc?.dispose();
+    _fileTransfer = null;
+    _webRtc = null;
+    _connectionState = WebRtcConnectionState.connecting;
+    notifyListeners();
+
+    await _startWebRtc(
+      remotePeerId: _session!.remotePeerId!,
+      isInitiator: false,
+    );
+  }
+
+  Future<void> pickAndSendFiles() async {
+    // file_picker UI katmanında çağrılır; burada sadece path listesi gönderilir.
+    throw UnimplementedError('UI üzerinden sendFiles çağırın.');
+  }
+
+  Future<void> sendFilePaths(List<String> paths) async {
+    if (_fileTransfer == null) {
+      throw StateError('Bağlantı henüz hazır değil.');
+    }
+
+    if (!isConnected) {
+      await reconnectIfNeeded();
+    }
+
+    if (!isConnected) {
+      throw StateError('Karşı cihazla bağlantı kurulamadı. Yeniden bağlanmayı deneyin.');
+    }
+
+    await _fileTransfer!.ensurePeerReady();
+    await _fileTransfer!.sendFiles(paths);
+    notifyListeners();
+  }
+
+  Future<void> disconnect() async {
+    if (_disconnecting || _disposed) return;
+    _disconnecting = true;
+    _guestWaitGeneration++;
+
+    _deferredReconnectTimer?.cancel();
+    _deferredReconnectTimer = null;
+    await _connectionSubscription?.cancel();
+    _connectionSubscription = null;
+    await _fileTransfer?.dispose();
+    await _webRtc?.dispose();
+    if (_session != null) {
+      await _signaling.closeRoom();
+    }
+    await _signaling.dispose();
+
+    _fileTransfer = null;
+    _webRtc = null;
+    _session = null;
+    _connectionState = WebRtcConnectionState.idle;
+    _disconnecting = false;
+    if (!_disposed) notifyListeners();
+  }
+
+  void _setBusy(bool value) {
+    if (_disposed) return;
+    _busy = value;
+    notifyListeners();
+  }
+
+  Future<void> _tearDown() async {
+    _guestWaitGeneration++;
+    _deferredReconnectTimer?.cancel();
+    _deferredReconnectTimer = null;
+    await _transferSubscription?.cancel();
+    _transferSubscription = null;
+    await _connectionSubscription?.cancel();
+    _connectionSubscription = null;
+    await _fileTransfer?.dispose();
+    await _webRtc?.dispose();
+    if (_session != null) {
+      await _signaling.closeRoom();
+    }
+    await _signaling.dispose();
+    _fileTransfer = null;
+    _webRtc = null;
+    _session = null;
+  }
+
+  @override
+  void dispose() {
+    if (_disposed) return;
+    _disposed = true;
+    unawaited(_tearDown());
+    super.dispose();
+  }
+}
