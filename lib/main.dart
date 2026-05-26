@@ -39,17 +39,31 @@ Future<void> main() async {
   }
 
   await NotificationService.instance.initialize();
+
+  String? startupError;
+  try {
+    await FirebaseAuthService.instance.ensureSignedIn();
+  } catch (e, stack) {
+    startupError = e.toString();
+    debugPrint('Firebase Auth başlatılamadı: $e\n$stack');
+  }
+
+  if (startupError == null) {
+    unawaited(_startBackgroundServices());
+  }
+
+  runApp(DirectDropApp(startupError: startupError));
+}
+
+Future<void> _startBackgroundServices() async {
   try {
     await _startDirectDropServices();
   } catch (e, stack) {
-    debugPrint('DirectDrop servisleri başlatılamadı: $e\n$stack');
+    debugPrint('Arka plan servisleri başlatılamadı (QR hâlâ çalışabilir): $e\n$stack');
   }
-
-  runApp(const DirectDropApp());
 }
 
 Future<void> _startDirectDropServices() async {
-  await FirebaseAuthService.instance.ensureSignedIn();
   final registry = DeviceRegistryService();
   registry.startConnectionMonitor();
   await registry.registerCurrentDevice();
@@ -103,7 +117,9 @@ void _handleWakeRequest(WakeRequest request) {
 }
 
 class DirectDropApp extends StatefulWidget {
-  const DirectDropApp({super.key});
+  const DirectDropApp({super.key, this.startupError});
+
+  final String? startupError;
 
   @override
   State<DirectDropApp> createState() => _DirectDropAppState();
@@ -150,6 +166,7 @@ class _DirectDropAppState extends State<DirectDropApp> with WidgetsBindingObserv
 
   Future<void> _goOnline() async {
     try {
+      await FirebaseAuthService.instance.ensureSignedIn();
       await _registry.refreshPresence();
       _registry.startHeartbeat();
       await PairedPresenceService.instance.ensureRunning();
@@ -165,6 +182,7 @@ class _DirectDropAppState extends State<DirectDropApp> with WidgetsBindingObserv
 
   @override
   Widget build(BuildContext context) {
+    final startupError = widget.startupError;
     return MaterialApp(
       navigatorKey: rootNavigatorKey,
       title: 'DirectDrop',
@@ -173,7 +191,50 @@ class _DirectDropAppState extends State<DirectDropApp> with WidgetsBindingObserv
         colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF2563EB)),
         useMaterial3: true,
       ),
-      home: const HomeScreen(),
+      home: startupError != null
+          ? _StartupErrorScreen(message: startupError)
+          : const HomeScreen(),
+    );
+  }
+}
+
+class _StartupErrorScreen extends StatelessWidget {
+  const _StartupErrorScreen({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'DirectDrop başlatılamadı',
+                style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 16),
+              Text(message),
+              const SizedBox(height: 24),
+              const Text(
+                'Kontrol listesi:',
+                style: TextStyle(fontWeight: FontWeight.w600),
+              ),
+              const SizedBox(height: 8),
+              const Text('• Firebase Console → Authentication → Anonymous → Enable'),
+              const Text('• Uygulamayı kapatıp Applications\'tan yeniden açın'),
+              if (Platform.isMacOS)
+                const Text(
+                  '• Keychain Access uygulamasında "DirectDrop" veya '
+                  '"firebase" girdilerini silip tekrar deneyin',
+                ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

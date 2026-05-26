@@ -13,7 +13,19 @@ echo "==> macOS CocoaPods"
 cd macos && pod install && cd ..
 
 echo "==> Release build"
-flutter build macos --release
+if ! flutter build macos --release; then
+  echo "==> flutter build başarısız; xcodebuild ile deneniyor..."
+  cd macos
+  xcodebuild \
+    -workspace Runner.xcworkspace \
+    -scheme Runner \
+    -configuration Release \
+    -allowProvisioningUpdates \
+    DEVELOPMENT_TEAM=ZX94LAT88X \
+    CODE_SIGN_IDENTITY="Apple Development" \
+    | tail -20
+  cd ..
+fi
 
 APP_SRC="build/macos/Build/Products/Release/DirectDrop.app"
 APP_DEST="/Applications/DirectDrop.app"

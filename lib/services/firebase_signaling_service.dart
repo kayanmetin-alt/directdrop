@@ -55,12 +55,19 @@ class FirebaseSignalingService {
       throw StateError('Bu oda kapatılmış.');
     }
 
+    final allowedUids = <String, dynamic>{};
+    final existing = data['allowedUids'];
+    if (existing is Map) {
+      allowedUids.addAll(Map<String, dynamic>.from(existing));
+    }
+    allowedUids[guestAuthUid] = true;
+
     await _roomRef!.update({
       'guestPeerId': guestPeerId,
       'guestDeviceName': deviceName,
       'guestPersistentId': persistentDeviceId,
       'guestAuthUid': guestAuthUid,
-      'allowedUids/$guestAuthUid': true,
+      'allowedUids': allowedUids,
       'status': 'connected',
     });
   }

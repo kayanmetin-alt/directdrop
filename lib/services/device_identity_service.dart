@@ -25,6 +25,12 @@ class DeviceIdentityService {
     return id;
   }
 
+  Future<void> resetDeviceId() async {
+    _cachedId = null;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_deviceIdKey);
+  }
+
   String get platformLabel {
     if (Platform.isIOS) return 'ios';
     if (Platform.isMacOS) return 'macos';

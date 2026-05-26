@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 
@@ -8,6 +10,7 @@ class FirebaseAuthService {
   static final FirebaseAuthService instance = FirebaseAuthService._();
 
   final FirebaseAuth _auth = FirebaseAuth.instance;
+  static const _signInTimeout = Duration(seconds: 12);
 
   String? get uid => _auth.currentUser?.uid;
 
@@ -24,8 +27,14 @@ class FirebaseAuthService {
     if (_auth.currentUser != null) return;
 
     try {
-      await _auth.signInAnonymously();
+      await _auth.signInAnonymously().timeout(_signInTimeout);
       debugPrint('Firebase anonim oturum: ${_auth.currentUser?.uid}');
+    } on TimeoutException {
+      throw StateError(
+        'Firebase Auth zaman aşımı (macOS keychain). '
+        'Uygulamayı kapatıp tekrar açın veya Keychain Access\'te '
+        'DirectDrop girdilerini silin.',
+      );
     } on FirebaseAuthException catch (e) {
       throw StateError(
         'Firebase Auth başarısız (${e.code}). '

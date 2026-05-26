@@ -11,6 +11,7 @@ import '../utils/room_code_generator.dart';
 import '../services/device_identity_service.dart';
 import '../services/device_registry_service.dart';
 import '../services/file_transfer_service.dart';
+import '../services/firebase_auth_service.dart';
 import '../services/firebase_signaling_service.dart';
 import '../services/paired_devices_service.dart';
 import '../services/transfer_history_service.dart';
@@ -85,6 +86,7 @@ class TransferSessionController extends ChangeNotifier {
     _setBusy(true);
     _pairSaved = false;
     try {
+      await FirebaseAuthService.instance.ensureSignedIn();
       final peerId = _uuid.v4();
       final roomCode = RoomCodeGenerator.generate();
       final persistentId = await _persistentDeviceId();
@@ -155,6 +157,7 @@ class TransferSessionController extends ChangeNotifier {
     _setBusy(true);
     _pairSaved = false;
     try {
+      await FirebaseAuthService.instance.ensureSignedIn();
       final normalizedCode = roomCode.trim().toUpperCase();
       final peerId = _uuid.v4();
       final persistentId = await _persistentDeviceId();

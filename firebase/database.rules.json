@@ -3,7 +3,7 @@
     "rooms": {
       "$roomCode": {
         ".read": "auth != null",
-        ".write": "auth != null && ((!data.exists() && newData.child('hostAuthUid').val() === auth.uid && newData.child('allowedUids').child(auth.uid).val() === true) || (data.exists() && data.child('status').val() === 'waiting' && newData.child('guestAuthUid').val() === auth.uid && newData.child('allowedUids').child(auth.uid).val() === true) || (data.exists() && data.child('allowedUids').child(auth.uid).val() === true))",
+        ".write": "auth != null && ((!data.exists() && newData.child('hostAuthUid').val() === auth.uid) || (data.exists() && data.child('status').val() === 'waiting' && newData.child('guestAuthUid').val() === auth.uid) || (data.exists() && data.child('allowedUids').child(auth.uid).val() === true))",
         ".indexOn": ["createdAt"],
         "signaling": {
           "$peerId": {

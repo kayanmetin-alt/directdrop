@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:flutter/foundation.dart';
 
@@ -21,18 +22,36 @@ class DeviceRegistryService {
   DatabaseReference get _devices => _database.ref('devices');
 
   Future<void> registerCurrentDevice({String? fcmToken}) async {
+    try {
+      await _registerCurrentDeviceOnce(fcmToken: fcmToken);
+    } on FirebaseException catch (e) {
+      if (e.code != 'permission-denied' && e.code != 'unknown') rethrow;
+      debugPrint('Cihaz kaydı başarısız ($e); yeni cihaz kimliği deneniyor...');
+      await DeviceIdentityService.instance.resetDeviceId();
+      await _registerCurrentDeviceOnce(fcmToken: fcmToken);
+    }
+  }
+
+  Future<void> _registerCurrentDeviceOnce({String? fcmToken}) async {
     final identity = DeviceIdentityService.instance;
     final deviceId = await identity.getDeviceId();
     final ownerUid = await FirebaseAuthService.instance.requireUid();
     final ref = _devices.child(deviceId);
-    await ref.update({
+    final payload = {
       'displayName': identity.displayName,
       'platform': identity.platformLabel,
-      'lastSeen': ServerValue.timestamp,
+      'lastSeen': DateTime.now().millisecondsSinceEpoch,
       'online': true,
       'ownerUid': ownerUid,
       if (fcmToken != null) 'fcmToken': fcmToken,
-    });
+    };
+    final snapshot = await ref.get();
+    if (snapshot.exists) {
+      await ref.update(payload);
+    } else {
+      await ref.set(payload);
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 300));
     await _configureDisconnectHandlers(ref);
   }
 
@@ -49,8 +68,12 @@ class DeviceRegistryService {
   }
 
   Future<void> _configureDisconnectHandlers(DatabaseReference deviceRef) async {
-    await deviceRef.child('online').onDisconnect().set(false);
-    await deviceRef.child('lastSeen').onDisconnect().set(ServerValue.timestamp);
+    try {
+      await deviceRef.child('online').onDisconnect().set(false);
+      await deviceRef.child('lastSeen').onDisconnect().set(ServerValue.timestamp);
+    } catch (e) {
+      debugPrint('onDisconnect kaydı başarısız: $e');
+    }
   }
 
   void startHeartbeat() {
