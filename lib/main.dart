@@ -49,6 +49,7 @@ Future<void> main() async {
 
 Future<void> _startDirectDropServices() async {
   final registry = DeviceRegistryService();
+  registry.startConnectionMonitor();
   await registry.registerCurrentDevice();
   registry.startHeartbeat();
   await PairedDevicesService.instance.load();
@@ -128,12 +129,14 @@ class _DirectDropAppState extends State<DirectDropApp> with WidgetsBindingObserv
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       unawaited(_goOnline());
+    } else if (_isDesktop && state == AppLifecycleState.inactive) {
+      // Windows bazen yalnızca inactive/resumed gönderir; ön plana dönüşte yenile.
+      unawaited(_goOnline());
     } else if (!_isDesktop &&
         (state == AppLifecycleState.paused ||
             state == AppLifecycleState.hidden ||
             state == AppLifecycleState.detached)) {
       // Mobilde arka plana geçince yalnızca çevrimdışı işaretle.
-      // Dinleyicileri kapatma — yeniden açılışta çökme/yarım durum oluşabiliyor.
       unawaited(_markOffline());
     }
   }
@@ -145,7 +148,7 @@ class _DirectDropAppState extends State<DirectDropApp> with WidgetsBindingObserv
 
   Future<void> _goOnline() async {
     try {
-      await _registry.registerCurrentDevice();
+      await _registry.refreshPresence();
       _registry.startHeartbeat();
       await PairedPresenceService.instance.ensureRunning();
       await PairedAutoConnectService.instance.ensureRunning();

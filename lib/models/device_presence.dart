@@ -7,9 +7,9 @@ class DevicePresence {
   final bool online;
   final int? lastSeenMs;
 
-  /// Heartbeat 20 sn; bu süreden eskiyse çevrimdışı say.
-  static const onlineFreshnessMs = 35000;
-  static const _staleAfterMs = 45000;
+  /// Heartbeat 12 sn (masaüstü); bu süreden eskiyse çevrimdışı say.
+  static const onlineFreshnessMs = 45000;
+  static const _staleAfterMs = 70000;
 
   bool get isOnlineNow {
     if (!online) return false;

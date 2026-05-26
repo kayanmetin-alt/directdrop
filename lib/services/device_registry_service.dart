@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:firebase_database/firebase_database.dart';
+import 'package:flutter/foundation.dart';
 
 import '../models/device_presence.dart';
 import '../models/paired_device.dart';
@@ -12,6 +14,8 @@ class DeviceRegistryService {
 
   final FirebaseDatabase _database;
   Timer? _heartbeatTimer;
+  StreamSubscription<DatabaseEvent>? _connectedSubscription;
+  bool _connectionMonitorStarted = false;
 
   DatabaseReference get _devices => _database.ref('devices');
 
@@ -48,14 +52,64 @@ class DeviceRegistryService {
 
   void startHeartbeat() {
     _heartbeatTimer?.cancel();
-    _heartbeatTimer = Timer.periodic(const Duration(seconds: 20), (_) {
-      unawaited(registerCurrentDevice());
+    final interval = _heartbeatInterval;
+    _heartbeatTimer = Timer.periodic(interval, (_) {
+      unawaited(_heartbeatTick());
     });
   }
+
+  Duration get _heartbeatInterval {
+    if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
+      return const Duration(seconds: 12);
+    }
+    return const Duration(seconds: 20);
+  }
+
+  Future<void> _heartbeatTick() async {
+    try {
+      await registerCurrentDevice();
+    } catch (e) {
+      debugPrint('Heartbeat başarısız: $e');
+    }
+  }
+
+  /// Firebase yeniden bağlanınca onDisconnect yüzünden kalan offline bayrağını düzelt.
+  void startConnectionMonitor() {
+    if (_connectionMonitorStarted) return;
+    _connectionMonitorStarted = true;
+
+    _connectedSubscription?.cancel();
+    _connectedSubscription =
+        _database.ref('.info/connected').onValue.listen((event) {
+      final connected = event.snapshot.value == true;
+      if (!connected) return;
+      unawaited(_onFirebaseReconnected());
+    });
+  }
+
+  Future<void> _onFirebaseReconnected() async {
+    try {
+      await registerCurrentDevice();
+      if (_heartbeatTimer == null) {
+        startHeartbeat();
+      }
+    } catch (e) {
+      debugPrint('Firebase yeniden bağlanma kaydı başarısız: $e');
+    }
+  }
+
+  Future<void> refreshPresence() => _onFirebaseReconnected();
 
   void stopHeartbeat() {
     _heartbeatTimer?.cancel();
     _heartbeatTimer = null;
+  }
+
+  Future<void> dispose() async {
+    stopHeartbeat();
+    await _connectedSubscription?.cancel();
+    _connectedSubscription = null;
+    _connectionMonitorStarted = false;
   }
 
   Stream<DevicePresence> watchPresence(String deviceId) {
