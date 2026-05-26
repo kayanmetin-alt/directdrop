@@ -29,11 +29,12 @@ class PairedDevice {
   }
 
   PairedDevice copyWith({
+    String? deviceId,
     String? displayName,
     DateTime? lastConnectedAt,
   }) {
     return PairedDevice(
-      deviceId: deviceId,
+      deviceId: deviceId ?? this.deviceId,
       displayName: displayName ?? this.displayName,
       platform: platform,
       lastConnectedAt: lastConnectedAt ?? this.lastConnectedAt,

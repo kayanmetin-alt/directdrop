@@ -28,8 +28,10 @@ class _IncomingConnectScreenState extends State<IncomingConnectScreen> {
   bool _joining = false;
 
   bool get _isKnownPeer {
-    return PairedDevicesService.instance.devices
-        .any((d) => d.deviceId == widget.request.fromDeviceId);
+    return PairedDevicesService.instance.isKnownPeer(
+      deviceId: widget.request.fromDeviceId,
+      displayName: widget.request.fromDeviceName,
+    );
   }
 
   @override

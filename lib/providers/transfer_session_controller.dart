@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:uuid/uuid.dart';
@@ -235,16 +236,20 @@ class TransferSessionController extends ChangeNotifier {
         onMessage: _onSignalingMessage,
       );
 
-      await _deviceRegistry.sendWakeRequest(
-        targetDeviceId: peer.deviceId,
-        request: WakeRequest(
-          roomCode: roomCode,
-          fromDeviceId: persistentId,
-          fromDeviceName: deviceName,
-          type: wakeType,
-          createdAt: DateTime.now().millisecondsSinceEpoch,
-        ),
-      );
+      final isDesktop =
+          Platform.isWindows || Platform.isMacOS || Platform.isLinux;
+      if (!isDesktop) {
+        await _deviceRegistry.sendWakeRequest(
+          targetDeviceId: peer.deviceId,
+          request: WakeRequest(
+            roomCode: roomCode,
+            fromDeviceId: persistentId,
+            fromDeviceName: deviceName,
+            type: wakeType,
+            createdAt: DateTime.now().millisecondsSinceEpoch,
+          ),
+        );
+      }
 
       await _deviceRegistry.sendPairInvite(
         targetDeviceId: peer.deviceId,

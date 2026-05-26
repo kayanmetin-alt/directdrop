@@ -163,8 +163,9 @@ class PairedAutoConnectService extends ChangeNotifier {
 
   /// Eşleşmiş cihazdan gelen wake/davet — onay ekranı açılmaz.
   Future<void> handleIncomingWake(WakeRequest request) async {
+    await _reconcileIncomingPeerId(request);
     final fromId = request.fromDeviceId;
-    if (fromId.isEmpty || !_isKnownPeer(fromId)) return;
+    if (fromId.isEmpty || !_isKnownIncomingPeer(request)) return;
     if (isConnectedTo(fromId)) return;
 
     final myId =
@@ -273,12 +274,22 @@ class PairedAutoConnectService extends ChangeNotifier {
     final myId =
         _myDeviceId ?? await DeviceIdentityService.instance.getDeviceId();
 
-    if (!_isKnownPeer(fromId)) {
-      await _registry.removePairInvite(
-        targetDeviceId: myId,
-        fromDeviceId: fromId,
+    if (!_isKnownIncomingPeerFromId(fromId)) {
+      final fromDeviceName = value['fromDeviceName'] as String? ?? 'Cihaz';
+      final byName =
+          PairedDevicesService.instance.findByDisplayName(fromDeviceName);
+      if (byName == null) {
+        await _registry.removePairInvite(
+          targetDeviceId: myId,
+          fromDeviceId: fromId,
+        );
+        return;
+      }
+      await PairedDevicesService.instance.reconcileDeviceId(
+        oldDeviceId: byName.deviceId,
+        newDeviceId: fromId,
       );
-      return;
+      _migrateSessionKey(byName.deviceId, fromId);
     }
 
     if (isConnectedTo(fromId)) {
@@ -429,7 +440,11 @@ class PairedAutoConnectService extends ChangeNotifier {
     _attachSessionListener(peer.deviceId, controller);
 
     try {
-      await controller.connectToPairedDevice(peer);
+      if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
+        await controller.hostPairInvite(peer);
+      } else {
+        await controller.connectToPairedDevice(peer);
+      }
     } catch (e) {
       debugPrint('Otomatik bağlantı başlatılamadı (${peer.displayName}): $e');
       await _disposeSession(peer.deviceId);
@@ -476,16 +491,6 @@ class PairedAutoConnectService extends ChangeNotifier {
 
       _lastInviteNudge[peerId] = now;
       try {
-        await _registry.sendWakeRequest(
-          targetDeviceId: peer.deviceId,
-          request: WakeRequest(
-            roomCode: roomCode,
-            fromDeviceId: myId,
-            fromDeviceName: DeviceIdentityService.instance.displayName,
-            type: WakeRequestType.connect,
-            createdAt: now.millisecondsSinceEpoch,
-          ),
-        );
         await _registry.sendPairInvite(
           targetDeviceId: peer.deviceId,
           fromDeviceId: myId,
@@ -551,8 +556,57 @@ class PairedAutoConnectService extends ChangeNotifier {
   }
 
   bool _isKnownPeer(String deviceId) {
-    return PairedDevicesService.instance.devices
-        .any((d) => d.deviceId == deviceId);
+    return PairedDevicesService.instance.findByDeviceId(deviceId) != null;
+  }
+
+  bool _isKnownIncomingPeer(WakeRequest request) {
+    return PairedDevicesService.instance.isKnownPeer(
+      deviceId: request.fromDeviceId,
+      displayName: request.fromDeviceName,
+    );
+  }
+
+  bool _isKnownIncomingPeerFromId(String deviceId) => _isKnownPeer(deviceId);
+
+  Future<void> _reconcileIncomingPeerId(WakeRequest request) async {
+    if (_isKnownPeer(request.fromDeviceId)) return;
+
+    final byName = PairedDevicesService.instance.findByDisplayName(
+      request.fromDeviceName,
+    );
+    if (byName == null) return;
+
+    await PairedDevicesService.instance.reconcileDeviceId(
+      oldDeviceId: byName.deviceId,
+      newDeviceId: request.fromDeviceId,
+    );
+    _migrateSessionKey(byName.deviceId, request.fromDeviceId);
+  }
+
+  void _migrateSessionKey(String oldId, String newId) {
+    if (oldId == newId) return;
+
+    final session = _sessionsByPeerId.remove(oldId);
+    if (session != null) {
+      _sessionsByPeerId[newId] = session;
+    }
+
+    final started = _sessionStartedAt.remove(oldId);
+    if (started != null) {
+      _sessionStartedAt[newId] = started;
+    }
+
+    final nudge = _lastInviteNudge.remove(oldId);
+    if (nudge != null) {
+      _lastInviteNudge[newId] = nudge;
+    }
+
+    if (_connectingPeers.remove(oldId)) {
+      _connectingPeers.add(newId);
+    }
+
+    _lastConnectAttempt.remove(oldId);
+    notifyListeners();
   }
 
   Future<TransferSessionController?> waitForSession(

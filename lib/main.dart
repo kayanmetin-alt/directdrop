@@ -79,16 +79,30 @@ Future<void> _startDirectDropServices() async {
   await WakeListenerService.instance.processPendingRequests();
 }
 
+bool _isDesktopConnectWake(WakeRequest request) {
+  return request.type == WakeRequestType.connect &&
+      (Platform.isWindows || Platform.isMacOS || Platform.isLinux);
+}
+
 void _handleWakeRequest(WakeRequest request) {
   final fromId = request.fromDeviceId;
   if (fromId.isEmpty) return;
 
-  final isKnown = PairedDevicesService.instance.devices
-      .any((d) => d.deviceId == fromId);
+  final isKnown = PairedDevicesService.instance.isKnownPeer(
+    deviceId: fromId,
+    displayName: request.fromDeviceName,
+  );
 
   // Eşleşmiş cihazlar arka planda otomatik bağlanır; onay ekranı açılmaz.
   if (isKnown) {
     unawaited(PairedAutoConnectService.instance.handleIncomingWake(request));
+    return;
+  }
+
+  // Masaüstünde bağlantı davetleri pairInvite ile gelir; wake yalnızca
+  // eski sürümlerden kalma olabilir — onay kutusu yerine sessizce katıl.
+  if (_isDesktopConnectWake(request)) {
+    unawaited(PairedAutoConnectService.instance.acceptWakeRequest(request));
     return;
   }
 

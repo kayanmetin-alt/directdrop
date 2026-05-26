@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:firebase_database/firebase_database.dart';
 
@@ -77,7 +78,11 @@ class WakeListenerService {
       return;
     }
 
-    await NotificationService.instance.showWakeNotification(request);
+    final isDesktopConnect = request.type == WakeRequestType.connect &&
+        (Platform.isWindows || Platform.isMacOS || Platform.isLinux);
+    if (!isDesktopConnect) {
+      await NotificationService.instance.showWakeNotification(request);
+    }
     _handler?.call(request);
   }
 

@@ -72,6 +72,57 @@ class PairedDevicesService extends ChangeNotifier {
     notifyListeners();
   }
 
+  PairedDevice? findByDeviceId(String deviceId) {
+    for (final device in _devices) {
+      if (device.deviceId == deviceId) return device;
+    }
+    return null;
+  }
+
+  PairedDevice? findByDisplayName(String displayName) {
+    if (displayName.isEmpty) return null;
+    for (final device in _devices) {
+      if (device.displayName == displayName) return device;
+    }
+    return null;
+  }
+
+  bool isKnownPeer({String? deviceId, String? displayName}) {
+    if (deviceId != null &&
+        deviceId.isNotEmpty &&
+        findByDeviceId(deviceId) != null) {
+      return true;
+    }
+    if (displayName != null &&
+        displayName.isNotEmpty &&
+        findByDisplayName(displayName) != null) {
+      return true;
+    }
+    return false;
+  }
+
+  /// Firebase Auth sonrası cihaz kimliği değişmişse eşleşmeyi günceller.
+  Future<void> reconcileDeviceId({
+    required String oldDeviceId,
+    required String newDeviceId,
+  }) async {
+    if (oldDeviceId == newDeviceId) return;
+    await load();
+
+    final oldIndex = _devices.indexWhere((d) => d.deviceId == oldDeviceId);
+    if (oldIndex < 0) return;
+
+    final newIndex = _devices.indexWhere((d) => d.deviceId == newDeviceId);
+    if (newIndex >= 0 && newIndex != oldIndex) {
+      _devices.removeAt(oldIndex);
+    } else {
+      _devices[oldIndex] = _devices[oldIndex].copyWith(deviceId: newDeviceId);
+    }
+
+    await _persist();
+    notifyListeners();
+  }
+
   Future<void> _persist() async {
     final prefs = await SharedPreferences.getInstance();
     final encoded = jsonEncode(_devices.map((d) => d.toJson()).toList());
