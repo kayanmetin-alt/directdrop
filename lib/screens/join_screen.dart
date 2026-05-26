@@ -4,6 +4,7 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:provider/provider.dart';
 
 import '../providers/transfer_session_controller.dart';
+import '../services/paired_auto_connect_service.dart';
 import '../services/active_session_registry.dart';
 import 'transfer_screen.dart';
 
@@ -23,7 +24,14 @@ class _JoinScreenState extends State<JoinScreen> {
   bool _joinInProgress = false;
 
   @override
+  void initState() {
+    super.initState();
+    PairedAutoConnectService.instance.setManualSessionActive(true);
+  }
+
+  @override
   void dispose() {
+    PairedAutoConnectService.instance.setManualSessionActive(false);
     _codeController.dispose();
     if (_controller != null) {
       ActiveSessionRegistry.instance.unregister(_controller!);

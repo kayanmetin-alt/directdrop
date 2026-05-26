@@ -50,6 +50,22 @@ class WebRtcService {
   static const _iceServers = [
     {'urls': 'stun:stun.l.google.com:19302'},
     {'urls': 'stun:stun1.l.google.com:19302'},
+    // NAT/firewall arkasındaki cihazlar için (Mac ↔ Windows).
+    {
+      'urls': 'turn:openrelay.metered.ca:80',
+      'username': 'openrelayproject',
+      'credential': 'openrelayproject',
+    },
+    {
+      'urls': 'turn:openrelay.metered.ca:443',
+      'username': 'openrelayproject',
+      'credential': 'openrelayproject',
+    },
+    {
+      'urls': 'turn:openrelay.metered.ca:443?transport=tcp',
+      'username': 'openrelayproject',
+      'credential': 'openrelayproject',
+    },
   ];
 
   Future<void> initialize() async {
@@ -104,6 +120,9 @@ class WebRtcService {
           ..maxRetransmits = 30,
       );
       _attachDataChannel(_dataChannel!);
+
+      // Karşı tarafın signaling dinleyicisini kurması için kısa bekleme.
+      await Future<void>.delayed(const Duration(milliseconds: 600));
 
       final offer = await _peerConnection!.createOffer();
       await _peerConnection!.setLocalDescription(offer);

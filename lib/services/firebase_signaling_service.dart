@@ -1,6 +1,8 @@
 import 'dart:async';
 
+import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_database/firebase_database.dart';
+import 'package:flutter/foundation.dart';
 
 import '../models/signaling_message.dart';
 import 'firebase_auth_service.dart';
@@ -25,16 +27,27 @@ class FirebaseSignalingService {
   }) async {
     final hostAuthUid = await FirebaseAuthService.instance.requireUid();
     _roomRef = _rooms.child(roomCode);
-    await _roomRef!.set({
-      'createdAt': ServerValue.timestamp,
-      'hostPeerId': hostPeerId,
-      'hostDeviceName': deviceName,
-      'hostPersistentId': persistentDeviceId,
-      'hostAuthUid': hostAuthUid,
-      'allowedUids': {hostAuthUid: true},
-      'status': 'waiting',
-    });
-    return roomCode;
+    try {
+      await _roomRef!.set({
+        'createdAt': ServerValue.timestamp,
+        'hostPeerId': hostPeerId,
+        'hostDeviceName': deviceName,
+        'hostPersistentId': persistentDeviceId,
+        'hostAuthUid': hostAuthUid,
+        'allowedUids': {hostAuthUid: true},
+        'status': 'waiting',
+      });
+      return roomCode;
+    } on FirebaseException catch (e) {
+      if (e.code == 'permission-denied') {
+        throw StateError(
+          'Oda oluşturulamadı. Firebase oturumu veya kuralları hatalı. '
+          'Uygulamayı kapatıp yeniden açın.',
+        );
+      }
+      debugPrint('createRoom Firebase hatası: ${e.code} ${e.message}');
+      rethrow;
+    }
   }
 
   Future<void> joinRoom({
@@ -62,14 +75,25 @@ class FirebaseSignalingService {
     }
     allowedUids[guestAuthUid] = true;
 
-    await _roomRef!.update({
-      'guestPeerId': guestPeerId,
-      'guestDeviceName': deviceName,
-      'guestPersistentId': persistentDeviceId,
-      'guestAuthUid': guestAuthUid,
-      'allowedUids': allowedUids,
-      'status': 'connected',
-    });
+    try {
+      await _roomRef!.update({
+        'guestPeerId': guestPeerId,
+        'guestDeviceName': deviceName,
+        'guestPersistentId': persistentDeviceId,
+        'guestAuthUid': guestAuthUid,
+        'allowedUids': allowedUids,
+        'status': 'connected',
+      });
+    } on FirebaseException catch (e) {
+      if (e.code == 'permission-denied') {
+        throw StateError(
+          'Odaya katılınamadı. Kod hatalı, süresi dolmuş veya oda dolu. '
+          'Ev sahibinden yeni kod isteyin.',
+        );
+      }
+      debugPrint('joinRoom Firebase hatası: ${e.code} ${e.message}');
+      rethrow;
+    }
   }
 
   Future<String?> getHostPersistentId(String roomCode) async {

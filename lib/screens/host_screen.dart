@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../providers/transfer_session_controller.dart';
+import '../services/paired_auto_connect_service.dart';
 import '../services/active_session_registry.dart';
 import '../widgets/room_code_display.dart';
 import 'transfer_screen.dart';
@@ -22,6 +23,7 @@ class _HostScreenState extends State<HostScreen> {
   @override
   void initState() {
     super.initState();
+    PairedAutoConnectService.instance.setManualSessionActive(true);
     _controller = TransferSessionController();
     ActiveSessionRegistry.instance.register(_controller);
     _createRoom();
@@ -40,6 +42,7 @@ class _HostScreenState extends State<HostScreen> {
 
   @override
   void dispose() {
+    PairedAutoConnectService.instance.setManualSessionActive(false);
     ActiveSessionRegistry.instance.unregister(_controller);
     unawaited(_controller.disconnect());
     super.dispose();

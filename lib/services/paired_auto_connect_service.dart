@@ -36,6 +36,7 @@ class PairedAutoConnectService extends ChangeNotifier {
   String? _myDeviceId;
   bool _started = false;
   bool _syncInProgress = false;
+  bool _manualSessionActive = false;
   final Map<String, DateTime> _sessionStartedAt = {};
   final Map<String, DateTime> _lastInviteNudge = {};
 
@@ -91,8 +92,26 @@ class PairedAutoConnectService extends ChangeNotifier {
   }
 
   void onAppResumed() {
-    if (!_started) return;
+    if (!_started || _manualSessionActive) return;
     _scheduleSync(immediate: true);
+  }
+
+  /// Manuel QR/kod ekranı açıkken otomatik bağlantıyı durdur.
+  void setManualSessionActive(bool active) {
+    if (_manualSessionActive == active) return;
+    _manualSessionActive = active;
+    if (active) {
+      unawaited(_pauseForManualSession());
+    } else {
+      _scheduleSync(immediate: true);
+    }
+  }
+
+  Future<void> _pauseForManualSession() async {
+    _syncDebounce?.cancel();
+    for (final peerId in _sessionsByPeerId.keys.toList()) {
+      await _disposeSession(peerId);
+    }
   }
 
   Future<void> stop() async {
@@ -384,7 +403,7 @@ class PairedAutoConnectService extends ChangeNotifier {
   }
 
   Future<void> _syncConnections() async {
-    if (!_started || _syncInProgress) return;
+    if (!_started || _syncInProgress || _manualSessionActive) return;
     _syncInProgress = true;
 
     try {

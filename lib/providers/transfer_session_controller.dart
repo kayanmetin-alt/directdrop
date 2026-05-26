@@ -42,8 +42,10 @@ class TransferSessionController extends ChangeNotifier {
   bool _pairSaved = false;
   bool _wasBackgrounded = false;
   int _guestWaitGeneration = 0;
+  int _connectionWatchGeneration = 0;
   DateTime? _lastReconnectAt;
   Timer? _deferredReconnectTimer;
+  Timer? _connectionWatchTimer;
   StreamSubscription<WebRtcConnectionState>? _connectionSubscription;
   StreamSubscription<List<TransferFileItem>>? _transferSubscription;
 
@@ -105,11 +107,7 @@ class TransferSessionController extends ChangeNotifier {
         deviceName: deviceName,
       );
 
-      _signaling.listenForMessages(
-        roomCode: roomCode,
-        localPeerId: peerId,
-        onMessage: _onSignalingMessage,
-      );
+      await _beginSignaling(roomCode: roomCode, localPeerId: peerId);
 
       _waitForGuest(roomCode, peerId);
       notifyListeners();
@@ -147,6 +145,11 @@ class TransferSessionController extends ChangeNotifier {
           remotePeerId: guestPeerId,
           isInitiator: true,
         );
+        await _signaling.replayPendingMessages(
+          localPeerId: hostPeerId,
+          onMessage: _onSignalingMessage,
+        );
+        _scheduleConnectionWatch();
         unawaited(_persistPairIfNeeded());
         break;
       }
@@ -182,16 +185,18 @@ class TransferSessionController extends ChangeNotifier {
         deviceName: deviceName,
       );
 
-      _signaling.listenForMessages(
-        roomCode: normalizedCode,
-        localPeerId: peerId,
-        onMessage: _onSignalingMessage,
-      );
+      await _beginSignaling(roomCode: normalizedCode, localPeerId: peerId);
 
       await _startWebRtc(
         remotePeerId: hostPeerId,
         isInitiator: false,
       );
+
+      await _signaling.replayPendingMessages(
+        localPeerId: peerId,
+        onMessage: _onSignalingMessage,
+      );
+      _scheduleConnectionWatch();
 
       unawaited(_persistPairIfNeeded());
       notifyListeners();
@@ -230,11 +235,7 @@ class TransferSessionController extends ChangeNotifier {
         deviceName: deviceName,
       );
 
-      _signaling.listenForMessages(
-        roomCode: roomCode,
-        localPeerId: peerId,
-        onMessage: _onSignalingMessage,
-      );
+      await _beginSignaling(roomCode: roomCode, localPeerId: peerId);
 
       final isDesktop =
           Platform.isWindows || Platform.isMacOS || Platform.isLinux;
@@ -293,11 +294,7 @@ class TransferSessionController extends ChangeNotifier {
         deviceName: deviceName,
       );
 
-      _signaling.listenForMessages(
-        roomCode: roomCode,
-        localPeerId: peerId,
-        onMessage: _onSignalingMessage,
-      );
+      await _beginSignaling(roomCode: roomCode, localPeerId: peerId);
 
       await _deviceRegistry.sendPairInvite(
         targetDeviceId: peer.deviceId,
@@ -320,6 +317,45 @@ class TransferSessionController extends ChangeNotifier {
 
   Future<RoomSession> joinFromWake(WakeRequest request) =>
       joinRoom(request.roomCode);
+
+  Future<void> _beginSignaling({
+    required String roomCode,
+    required String localPeerId,
+  }) async {
+    _signaling.listenForMessages(
+      roomCode: roomCode,
+      localPeerId: localPeerId,
+      onMessage: _onSignalingMessage,
+    );
+    await _signaling.replayPendingMessages(
+      localPeerId: localPeerId,
+      onMessage: _onSignalingMessage,
+    );
+  }
+
+  void _scheduleConnectionWatch() {
+    _connectionWatchTimer?.cancel();
+    final generation = ++_connectionWatchGeneration;
+    _connectionWatchTimer = Timer(const Duration(seconds: 50), () {
+      unawaited(_onConnectionWatchTimeout(generation));
+    });
+  }
+
+  Future<void> _onConnectionWatchTimeout(int generation) async {
+    if (_disposed || generation != _connectionWatchGeneration) return;
+    if (isConnected) return;
+
+    debugPrint('WebRTC ilk bağlantı zaman aşımı — yeniden denenecek.');
+    await reconnectIfNeeded();
+
+    if (_disposed || generation != _connectionWatchGeneration) return;
+    if (isConnected) return;
+
+    _errorMessage =
+        'Karşı cihazla bağlantı kurulamadı. Her iki tarafta uygulama açık mı kontrol edin.';
+    _connectionState = WebRtcConnectionState.failed;
+    notifyListeners();
+  }
 
   Future<void> _persistPairIfNeeded() async {
     if (_pairSaved || _session == null || _disposed) return;
@@ -436,6 +472,7 @@ class TransferSessionController extends ChangeNotifier {
     _connectionState = state;
 
     if (state == WebRtcConnectionState.connected) {
+      _connectionWatchTimer?.cancel();
       _deferredReconnectTimer?.cancel();
       unawaited(_persistPairIfNeeded());
     } else if (state == WebRtcConnectionState.disconnected ||
@@ -577,6 +614,7 @@ class TransferSessionController extends ChangeNotifier {
     _disconnecting = true;
     _guestWaitGeneration++;
 
+    _connectionWatchTimer?.cancel();
     _deferredReconnectTimer?.cancel();
     _deferredReconnectTimer = null;
     await _connectionSubscription?.cancel();
@@ -604,6 +642,7 @@ class TransferSessionController extends ChangeNotifier {
 
   Future<void> _tearDown() async {
     _guestWaitGeneration++;
+    _connectionWatchTimer?.cancel();
     _deferredReconnectTimer?.cancel();
     _deferredReconnectTimer = null;
     await _transferSubscription?.cancel();

@@ -20,6 +20,11 @@ class FirebaseAuthService {
     if (user == null) {
       throw StateError('Firebase Auth oturumu açılamadı.');
     }
+    try {
+      await user.getIdToken(true);
+    } catch (e) {
+      debugPrint('Auth token yenilenemedi (RTDB yazımı yine denenecek): $e');
+    }
     return user.uid;
   }
 
