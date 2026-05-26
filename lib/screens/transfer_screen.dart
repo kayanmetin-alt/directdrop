@@ -13,6 +13,7 @@ import '../widgets/desktop_file_drop_overlay.dart';
 import '../widgets/download_location_settings.dart';
 import '../widgets/transfer_history_tile.dart';
 import '../widgets/transfer_progress_tile.dart';
+import '../widgets/app_version_label.dart';
 
 class TransferScreen extends StatefulWidget {
   const TransferScreen({
@@ -254,7 +255,14 @@ class _TransferScreenState extends State<TransferScreen>
 
         return Scaffold(
           appBar: AppBar(
-            title: Text(peerLabel),
+            title: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(peerLabel),
+                const AppVersionLabel(compact: true),
+              ],
+            ),
             actions: [
               if (history.isNotEmpty)
                 IconButton(

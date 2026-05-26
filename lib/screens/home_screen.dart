@@ -231,6 +231,12 @@ class _HomeScreenState extends State<HomeScreen> {
       appBar: AppBar(
         title: const Text('DirectDrop'),
         centerTitle: true,
+        actions: const [
+          Padding(
+            padding: EdgeInsets.only(right: 16),
+            child: Center(child: AppVersionLabel(compact: true)),
+          ),
+        ],
       ),
       body: SafeArea(
         child: Padding(
@@ -400,8 +406,6 @@ class _HomeScreenState extends State<HomeScreen> {
                         },
                       ),
               ),
-              const SizedBox(height: 12),
-              const AppVersionLabel(),
             ],
           ),
         ),

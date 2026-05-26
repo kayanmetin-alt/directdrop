@@ -11,6 +11,7 @@ import 'firebase_options.dart';
 import 'models/paired_device.dart';
 import 'screens/home_screen.dart';
 import 'screens/incoming_connect_screen.dart';
+import 'services/app_version_service.dart';
 import 'services/device_registry_service.dart';
 import 'services/download_directory_service.dart';
 import 'services/firebase_auth_service.dart';
@@ -49,6 +50,7 @@ Future<void> main() async {
   }
 
   if (startupError == null) {
+    unawaited(AppVersionService.instance.load());
     unawaited(_startBackgroundServices());
   }
 
