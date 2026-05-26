@@ -158,13 +158,38 @@ Alınan dosyalar:
 - App Privacy formunda: "Realtime Database yalnızca eşleştirme için kullanılır, dosya içeriği sunucuya yüklenmez"
 - Export compliance: standart şifreleme (HTTPS/WebRTC)
 
+## Güvenlik (Firebase Auth)
+
+Uygulama açılışında **anonim Firebase Auth** oturumu açılır. Realtime Database kuralları buna göre kilitlenmiştir:
+
+| Veri | Kim okuyabilir? | Kim yazabilir? |
+|------|-----------------|----------------|
+| `devices/{id}` (online, isim…) | Giriş yapmış her cihaz | Yalnızca `ownerUid` sahibi |
+| `devices/{id}/wakeRequests` | Hedef cihaz sahibi | Gönderen (`fromAuthUid`) veya hedef (silme) |
+| `devices/{id}/incomingPair` | Hedef cihaz sahibi | Davet gönderen (`fromAuthUid`) |
+| `rooms/{kod}` | Giriş yapmış cihazlar | Oda katılımcıları (`allowedUids`) |
+
+**Kurulum (bir kez):**
+
+1. [Firebase Console](https://console.firebase.google.com) → projeniz → **Authentication** → **Sign-in method** → **Anonymous** → **Enable**
+2. Proje kökünde kuralları yayınlayın:
+
+```bash
+cd ~/directdrop
+firebase deploy --only database
+```
+
+3. Tüm cihazlarda uygulamayı güncelleyin (Mac: `./scripts/install_macos_app.sh`, Windows: yeni installer)
+
+> **Önemli:** Kuralları deploy etmeden veya Anonymous Auth açmadan yeni sürüm çalışmaz. Eski açık kurallar varken de eski build’ler çalışmaya devam eder.
+
 ## Production notları
 
 MVP şu an Google STUN sunucularını kullanır. Canlı ortamda:
 
 1. **TURN sunucusu** ekleyin (coturn) — kurumsal ağlarda P2P başarısız olursa gerekli
-2. Firebase kurallarını **auth + oda TTL** ile sıkılaştırın
-3. Eski odalar için **Cloud Function** ile otomatik temizlik ekleyin
+2. Eski odalar için **Cloud Function** ile otomatik temizlik ekleyin
+3. İsteğe bağlı: Firebase **App Check** ile anonim oturum kötüye kullanımını azaltın
 
 `lib/services/webrtc_service.dart` içindeki `_iceServers` listesine TURN bilgilerinizi ekleyin:
 
@@ -184,6 +209,7 @@ lib/
 ├── firebase_options.dart
 ├── models/
 ├── services/
+│   ├── firebase_auth_service.dart
 │   ├── firebase_signaling_service.dart
 │   ├── webrtc_service.dart
 │   └── file_transfer_service.dart

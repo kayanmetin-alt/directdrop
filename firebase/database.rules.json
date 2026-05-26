@@ -2,25 +2,31 @@
   "rules": {
     "rooms": {
       "$roomCode": {
-        ".read": true,
-        ".write": true,
+        ".read": "auth != null",
+        ".write": "auth != null && ((!data.exists() && newData.child('hostAuthUid').val() === auth.uid && newData.child('allowedUids').child(auth.uid).val() === true) || (data.exists() && data.child('status').val() === 'waiting' && newData.child('guestAuthUid').val() === auth.uid && newData.child('allowedUids').child(auth.uid).val() === true) || (data.exists() && data.child('allowedUids').child(auth.uid).val() === true))",
         ".indexOn": ["createdAt"],
         "signaling": {
           "$peerId": {
-            ".read": true,
-            ".write": true
+            ".read": "auth != null && root.child('rooms').child($roomCode).child('allowedUids').child(auth.uid).val() === true",
+            ".write": "auth != null && root.child('rooms').child($roomCode).child('allowedUids').child(auth.uid).val() === true"
           }
         }
       }
     },
     "devices": {
       "$deviceId": {
-        ".read": true,
-        ".write": true,
+        ".read": "auth != null",
+        ".write": "auth != null && ((!data.exists() && newData.child('ownerUid').val() === auth.uid) || (data.child('ownerUid').val() === auth.uid) || (!data.hasChild('ownerUid') && newData.child('ownerUid').val() === auth.uid))",
         "wakeRequests": {
           "$requestId": {
-            ".read": true,
-            ".write": true
+            ".read": "auth != null && root.child('devices').child($deviceId).child('ownerUid').val() === auth.uid",
+            ".write": "auth != null && ((newData.exists() && newData.child('fromAuthUid').val() === auth.uid) || (!newData.exists() && (data.child('fromAuthUid').val() === auth.uid || root.child('devices').child($deviceId).child('ownerUid').val() === auth.uid)))"
+          }
+        },
+        "incomingPair": {
+          "$fromDeviceId": {
+            ".read": "auth != null && root.child('devices').child($deviceId).child('ownerUid').val() === auth.uid",
+            ".write": "auth != null && ((newData.exists() && newData.child('fromAuthUid').val() === auth.uid) || (!newData.exists() && (data.child('fromAuthUid').val() === auth.uid || root.child('devices').child($deviceId).child('ownerUid').val() === auth.uid)))"
           }
         }
       }

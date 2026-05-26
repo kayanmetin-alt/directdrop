@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 import '../models/device_presence.dart';
 import '../models/paired_device.dart';
 import 'device_identity_service.dart';
+import 'firebase_auth_service.dart';
 
 class DeviceRegistryService {
   DeviceRegistryService({FirebaseDatabase? database})
@@ -22,12 +23,14 @@ class DeviceRegistryService {
   Future<void> registerCurrentDevice({String? fcmToken}) async {
     final identity = DeviceIdentityService.instance;
     final deviceId = await identity.getDeviceId();
+    final ownerUid = await FirebaseAuthService.instance.requireUid();
     final ref = _devices.child(deviceId);
     await ref.update({
       'displayName': identity.displayName,
       'platform': identity.platformLabel,
       'lastSeen': ServerValue.timestamp,
       'online': true,
+      'ownerUid': ownerUid,
       if (fcmToken != null) 'fcmToken': fcmToken,
     });
     await _configureDisconnectHandlers(ref);
@@ -137,8 +140,12 @@ class DeviceRegistryService {
     required String targetDeviceId,
     required WakeRequest request,
   }) async {
+    final fromAuthUid = await FirebaseAuthService.instance.requireUid();
     final ref = _devices.child(targetDeviceId).child('wakeRequests').push();
-    await ref.set(request.toMap());
+    await ref.set({
+      ...request.toMap(),
+      'fromAuthUid': fromAuthUid,
+    });
   }
 
   Future<void> sendPairInvite({
@@ -147,6 +154,7 @@ class DeviceRegistryService {
     required String fromDeviceName,
     required String roomCode,
   }) async {
+    final fromAuthUid = await FirebaseAuthService.instance.requireUid();
     final ref = _devices
         .child(targetDeviceId)
         .child('incomingPair')
@@ -157,6 +165,7 @@ class DeviceRegistryService {
       'roomCode': roomCode,
       'fromDeviceId': fromDeviceId,
       'fromDeviceName': fromDeviceName,
+      'fromAuthUid': fromAuthUid,
       'createdAt': ServerValue.timestamp,
     });
   }

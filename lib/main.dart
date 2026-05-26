@@ -13,6 +13,7 @@ import 'screens/home_screen.dart';
 import 'screens/incoming_connect_screen.dart';
 import 'services/device_registry_service.dart';
 import 'services/download_directory_service.dart';
+import 'services/firebase_auth_service.dart';
 import 'services/notification_service.dart';
 import 'services/paired_auto_connect_service.dart';
 import 'services/paired_presence_service.dart';
@@ -48,6 +49,7 @@ Future<void> main() async {
 }
 
 Future<void> _startDirectDropServices() async {
+  await FirebaseAuthService.instance.ensureSignedIn();
   final registry = DeviceRegistryService();
   registry.startConnectionMonitor();
   await registry.registerCurrentDevice();

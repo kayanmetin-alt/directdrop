@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:firebase_database/firebase_database.dart';
 
 import '../models/signaling_message.dart';
+import 'firebase_auth_service.dart';
 
 typedef SignalingCallback = FutureOr<void> Function(SignalingMessage message);
 
@@ -22,12 +23,15 @@ class FirebaseSignalingService {
     required String deviceName,
     required String persistentDeviceId,
   }) async {
+    final hostAuthUid = await FirebaseAuthService.instance.requireUid();
     _roomRef = _rooms.child(roomCode);
     await _roomRef!.set({
       'createdAt': ServerValue.timestamp,
       'hostPeerId': hostPeerId,
       'hostDeviceName': deviceName,
       'hostPersistentId': persistentDeviceId,
+      'hostAuthUid': hostAuthUid,
+      'allowedUids': {hostAuthUid: true},
       'status': 'waiting',
     });
     return roomCode;
@@ -39,6 +43,7 @@ class FirebaseSignalingService {
     required String deviceName,
     required String persistentDeviceId,
   }) async {
+    final guestAuthUid = await FirebaseAuthService.instance.requireUid();
     _roomRef = _rooms.child(roomCode);
     final snapshot = await _roomRef!.get();
     if (!snapshot.exists) {
@@ -54,6 +59,8 @@ class FirebaseSignalingService {
       'guestPeerId': guestPeerId,
       'guestDeviceName': deviceName,
       'guestPersistentId': persistentDeviceId,
+      'guestAuthUid': guestAuthUid,
+      'allowedUids/$guestAuthUid': true,
       'status': 'connected',
     });
   }
