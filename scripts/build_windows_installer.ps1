@@ -31,6 +31,14 @@ Kurulumdan sonra bu scripti tekrar çalıştırın.
 "@
 }
 
+Write-Host "==> Visual C++ Redistributable (x64)"
+$RedistDir = Join-Path $Root "windows\installer\redist"
+$RedistPath = Join-Path $RedistDir "vc_redist.x64.exe"
+if (-not (Test-Path $RedistPath)) {
+    New-Item -ItemType Directory -Force -Path $RedistDir | Out-Null
+    Invoke-WebRequest -Uri "https://aka.ms/vs/17/release/vc_redist.x64.exe" -OutFile $RedistPath
+}
+
 Write-Host "==> Kurulum paketi (Setup.exe)"
 & $Iscc "windows\installer\directdrop.iss"
 

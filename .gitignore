@@ -19,6 +19,9 @@ Thumbs.db
 # Windows installer output
 dist/
 
+# Bundled at build time from Microsoft CDN
+windows/installer/redist/vc_redist.x64.exe
+
 # Env
 .env
 .env.*

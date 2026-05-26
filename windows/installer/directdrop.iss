@@ -1,7 +1,7 @@
 ; DirectDrop Windows installer — build with Inno Setup 6 after `flutter build windows --release`
 
 #define MyAppName "DirectDrop"
-#define MyAppVersion "1.0.1"
+#define MyAppVersion "1.0.2"
 #define MyAppPublisher "DirectDrop"
 #define MyAppExeName "directdrop.exe"
 #define BuildDir "..\..\build\windows\x64\runner\Release"
@@ -38,6 +38,7 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 
 [Files]
 Source: "{#BuildDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "redist\vc_redist.x64.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall; Check: VCRedistNeedsInstall
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
@@ -45,25 +46,16 @@ Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Run]
+Filename: "{tmp}\vc_redist.x64.exe"; Parameters: "/install /quiet /norestart"; StatusMsg: "Visual C++ calisma zamani kuruluyor..."; Check: VCRedistNeedsInstall; Flags: waituntilterminated
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent
 
 [Code]
-function VCRedistInstalled: Boolean;
+function VCRedistNeedsInstall: Boolean;
 var
   Version: String;
 begin
-  Result :=
+  Result := not (
     RegQueryStringValue(HKLM, 'SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64', 'Version', Version) or
-    RegQueryStringValue(HKLM, 'SOFTWARE\WOW6432Node\Microsoft\VisualStudio\14.0\VC\Runtimes\x64', 'Version', Version);
-end;
-
-function InitializeSetup: Boolean;
-begin
-  Result := True;
-  if not VCRedistInstalled then
-    MsgBox(
-      'DirectDrop, Microsoft Visual C++ 2015-2022 Redistributable (x64) gerektirir.' + #13#10 +
-      'Kurulumdan sonra çalışmazsa şu paketi yükleyin:' + #13#10 +
-      'https://aka.ms/vs/17/release/vc_redist.x64.exe',
-      mbInformation, MB_OK);
+    RegQueryStringValue(HKLM, 'SOFTWARE\WOW6432Node\Microsoft\VisualStudio\14.0\VC\Runtimes\x64', 'Version', Version)
+  );
 end;

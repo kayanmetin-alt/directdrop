@@ -29,6 +29,12 @@ jobs:
       - name: Install Inno Setup
         run: choco install innosetup -y --no-progress
 
+      - name: Download VC++ Redistributable
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path windows/installer/redist | Out-Null
+          Invoke-WebRequest -Uri "https://aka.ms/vs/17/release/vc_redist.x64.exe" -OutFile windows/installer/redist/vc_redist.x64.exe
+
       - name: Build installer
         run: |
           & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "windows\installer\directdrop.iss"
