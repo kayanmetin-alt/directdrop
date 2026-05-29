@@ -16,7 +16,7 @@
     "pairConnect": {
       "$pairKey": {
         ".read": "auth != null",
-        ".write": "auth != null && ((!data.exists() && newData.child('fromAuthUid').val() === auth.uid) || (data.exists() && data.child('fromAuthUid').val() === auth.uid))"
+        ".write": "auth != null"
       }
     },
     "pairInvites": {

@@ -29,6 +29,19 @@ class FirebaseSignalingService {
     final hostAuthUid = await FirebaseAuthService.instance.requireUid();
     _roomRef = _rooms.child(roomCode);
     try {
+      final existing = await _roomRef!.get();
+      if (existing.exists && existing.value is Map) {
+        final data = Map<String, dynamic>.from(existing.value as Map);
+        final status = data['status'] as String?;
+        if (status == 'closed' || status == 'connected') {
+          try {
+            await _roomRef!.remove();
+          } catch (e) {
+            debugPrint('Eski oda silinemedi ($roomCode): $e');
+          }
+        }
+      }
+
       await _roomRef!.set({
         'createdAt': ServerValue.timestamp,
         'hostPeerId': hostPeerId,

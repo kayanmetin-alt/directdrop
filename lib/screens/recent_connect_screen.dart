@@ -88,11 +88,11 @@ class _RecentConnectScreenState extends State<RecentConnectScreen> {
   @override
   void dispose() {
     RecentConnectionService.instance.clearAutoConnectActive();
-    if (_controller != null) {
-      ActiveSessionRegistry.instance.unregister(_controller!);
-      if (_ownsController && !_controller!.isDisposed) {
-        _controller!.disconnect();
-        _controller!.dispose();
+    final controller = _controller;
+    if (controller != null) {
+      ActiveSessionRegistry.instance.unregister(controller);
+      if (_ownsController && !controller.isDisposed) {
+        unawaited(controller.disconnect());
       }
     }
     super.dispose();

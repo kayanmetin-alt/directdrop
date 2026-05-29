@@ -55,6 +55,7 @@ Future<void> main() async {
 
     if (startupError == null) {
       await SessionCleanupService.instance.resetOnLaunch();
+      await SessionCleanupService.instance.onLaunchAfterAuth();
       try {
         await NotificationService.instance.initialize();
       } catch (e, stack) {
@@ -129,9 +130,13 @@ class _DirectDropAppState extends State<DirectDropApp> with WidgetsBindingObserv
         }),
       );
       unawaited(RecentConnectionService.instance.ensureListening());
-    } else if (state == AppLifecycleState.detached) {
-      RecentConnectionService.instance.stopListening();
-      unawaited(ActiveSessionRegistry.instance.disconnectActive());
+    } else if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached) {
+      unawaited(SessionCleanupService.instance.markGracefulShutdown());
+      if (state == AppLifecycleState.detached) {
+        RecentConnectionService.instance.stopListening();
+        unawaited(ActiveSessionRegistry.instance.disconnectActive());
+      }
     }
   }
 

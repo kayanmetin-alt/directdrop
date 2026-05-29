@@ -37,6 +37,9 @@ class RecentConnectionService extends ChangeNotifier {
 
   void Function(PairedDevice peer)? openAutoConnectScreen;
 
+  /// Çökme sonrası ilk açılışta mevcut davetlerle otomatik ekran açılmasın.
+  bool suppressAutoConnectThisLaunch = false;
+
   PairedDevice? get incomingInvitePeer => _incomingInvitePeer;
 
   bool get isListening => _listening;
@@ -69,10 +72,14 @@ class RecentConnectionService extends ChangeNotifier {
       await _refreshPairSessionWatchers();
       PairedDevicesService.instance.addListener(_refreshPairSessionWatchers);
 
-      await _processExistingInvites(myId);
+      if (!suppressAutoConnectThisLaunch) {
+        await _processExistingInvites(myId);
+      }
+      suppressAutoConnectThisLaunch = false;
     } catch (e) {
       debugPrint('Davet dinleyicisi: $e');
       _listening = false;
+      suppressAutoConnectThisLaunch = false;
     }
   }
 
@@ -162,6 +169,7 @@ class RecentConnectionService extends ChangeNotifier {
 
   Future<void> _tryAutoAcceptInvite(PairedDevice peer) async {
     if (!_listening) return;
+    if (suppressAutoConnectThisLaunch) return;
     if (_autoConnectActivePeerId == peer.deviceId) return;
     if (_inflight.containsKey(peer.deviceId)) return;
 
@@ -279,6 +287,8 @@ class RecentConnectionService extends ChangeNotifier {
       await _registerWithTimeout();
 
       final myId = await DeviceIdentityService.instance.getDeviceId();
+      await _invalidateStaleReconnectState(myId, peer.deviceId);
+
       String? roomCode = await _readInviteRoomCode(peer.deviceId);
 
       final sessionRole = await _coordinator.readRole(
@@ -334,6 +344,40 @@ class RecentConnectionService extends ChangeNotifier {
     );
   }
 
+  Future<bool> _isRoomJoinableQuiet(String roomCode) async {
+    try {
+      await _signaling.assertRoomJoinable(roomCode);
+      return true;
+    } on StateError {
+      return false;
+    }
+  }
+
+  /// Kapalı / dolu odaya bağlı eski pairConnect ve davetleri temizler.
+  Future<void> _invalidateStaleReconnectState(
+    String myId,
+    String peerDeviceId,
+  ) async {
+    final role = await _coordinator.readRole(
+      myDeviceId: myId,
+      peerDeviceId: peerDeviceId,
+    );
+    if (role != null && !await _isRoomJoinableQuiet(role.roomCode)) {
+      await _coordinator.clearSession(
+        myDeviceId: myId,
+        peerDeviceId: peerDeviceId,
+      );
+    }
+
+    final inviteCode = await _readInviteRoomCode(peerDeviceId);
+    if (inviteCode != null && !await _isRoomJoinableQuiet(inviteCode)) {
+      await _registry.clearPairInvitesBetween(
+        myDeviceId: myId,
+        peerDeviceId: peerDeviceId,
+      );
+    }
+  }
+
   Future<TransferSessionController> _connectToPeer(
     PairedDevice peer, {
     void Function(String message)? onProgress,
@@ -342,6 +386,7 @@ class RecentConnectionService extends ChangeNotifier {
     await _registerWithTimeout();
 
     final myId = await DeviceIdentityService.instance.getDeviceId();
+    await _invalidateStaleReconnectState(myId, peer.deviceId);
 
     onProgress?.call('Karşı cihaz kontrol ediliyor…');
     final existingInvite = await _readInviteRoomCode(peer.deviceId);

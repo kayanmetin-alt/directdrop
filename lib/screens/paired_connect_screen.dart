@@ -95,9 +95,8 @@ class _PairedConnectScreenState extends State<PairedConnectScreen> {
     PairedAutoConnectService.instance.removeListener(_onAutoConnectChanged);
     if (_controller != null) {
       ActiveSessionRegistry.instance.unregister(_controller!);
-      if (_ownsController) {
+      if (_ownsController && !_controller!.isDisposed) {
         unawaited(_controller!.disconnect());
-        _controller!.dispose();
       }
     }
     super.dispose();

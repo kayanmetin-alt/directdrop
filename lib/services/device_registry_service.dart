@@ -208,6 +208,15 @@ class DeviceRegistryService {
     });
   }
 
+  /// Bu cihaza gelen tüm yeniden bağlanma davetlerini siler (çökme sonrası).
+  Future<void> clearAllInvitesForDevice(String targetDeviceId) async {
+    try {
+      await _pairInvites.child(targetDeviceId).remove();
+    } catch (e) {
+      debugPrint('Tüm davetler silinemedi: $e');
+    }
+  }
+
   Future<void> removePairInvite({
     required String targetDeviceId,
     required String fromDeviceId,

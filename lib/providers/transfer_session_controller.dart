@@ -14,6 +14,7 @@ import '../services/device_registry_service.dart';
 import '../services/file_transfer_service.dart';
 import '../services/firebase_auth_service.dart';
 import '../services/firebase_signaling_service.dart';
+import '../services/pair_connect_coordinator.dart';
 import '../services/paired_devices_service.dart';
 import '../services/transfer_history_service.dart';
 import '../services/webrtc_service.dart';
@@ -690,6 +691,18 @@ class TransferSessionController extends ChangeNotifier {
           remotePeerId: session.remotePeerId!,
         );
         await _signaling.closeRoom();
+      }
+      final peerId = peerDeviceId;
+      if (peerId != null) {
+        final myId = await _persistentDeviceId();
+        await PairConnectCoordinator().clearSession(
+          myDeviceId: myId,
+          peerDeviceId: peerId,
+        );
+        await _deviceRegistry.clearPairInvitesBetween(
+          myDeviceId: myId,
+          peerDeviceId: peerId,
+        );
       }
     } catch (e) {
       debugPrint('disconnect closeRoom: $e');
