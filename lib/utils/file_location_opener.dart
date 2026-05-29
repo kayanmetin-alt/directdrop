@@ -1,12 +1,15 @@
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:open_file/open_file.dart';
 import 'package:path/path.dart' as p;
 
 /// İndirilen dosyanın kayıt konumunu sistem dosya yöneticisinde gösterir.
 class FileLocationOpener {
   const FileLocationOpener._();
+
+  static const _iosFilesChannel = MethodChannel('com.directdrop.app/files');
 
   /// İndirme klasörünü dosya yöneticisinde (veya iOS’ta Dosyalar’da) açar.
   static Future<bool> openDownloadsFolder(String dirPath) async {
@@ -16,6 +19,14 @@ class FileLocationOpener {
     }
 
     try {
+      if (Platform.isIOS) {
+        final opened = await _iosFilesChannel.invokeMethod<bool>(
+          'openDownloadsFolder',
+          dirPath,
+        );
+        return opened == true;
+      }
+
       if (Platform.isWindows) {
         final normalized = p.normalize(dirPath).replaceAll('/', r'\');
         await Process.run('explorer.exe', [normalized], runInShell: true);
@@ -32,14 +43,9 @@ class FileLocationOpener {
         return true;
       }
 
-      // iOS / Android: mümkünse klasörü aç; olmazsa içerideki bir dosyayı göster.
-      final result = await OpenFile.open(dirPath);
-      if (result.type == ResultType.done) return true;
-
-      await for (final entity in dir.list()) {
-        if (entity is File) {
-          return revealSavedFile(entity.path);
-        }
+      if (Platform.isAndroid) {
+        final result = await OpenFile.open(dirPath);
+        return result.type == ResultType.done;
       }
 
       return false;
