@@ -16,6 +16,7 @@ import '../services/firebase_auth_service.dart';
 import '../services/firebase_signaling_service.dart';
 import '../services/pair_connect_coordinator.dart';
 import '../services/paired_devices_service.dart';
+import '../services/screen_wake_service.dart';
 import '../services/transfer_history_service.dart';
 import '../services/webrtc_service.dart';
 
@@ -83,10 +84,40 @@ class TransferSessionController extends ChangeNotifier {
     await _fileTransfer?.rejectIncoming(fileId);
   }
 
+  Future<void> togglePauseTransfer(String fileId) async {
+    final transfer = _fileTransfer;
+    if (transfer == null) return;
+
+    TransferFileItem? item;
+    for (final entry in transfer.items) {
+      if (entry.id == fileId) {
+        item = entry;
+        break;
+      }
+    }
+    if (item == null) return;
+
+    if (item.status == TransferStatus.paused) {
+      await transfer.resumeTransfer(fileId);
+    } else if (item.status == TransferStatus.inProgress) {
+      await transfer.pauseTransfer(fileId);
+    }
+  }
+
+  Future<void> cancelTransfer(String fileId) async {
+    await _fileTransfer?.cancelTransfer(fileId);
+  }
+
   List<TransferFileItem> get awaitingApprovalFiles =>
       _fileTransfer?.awaitingApprovalItems ?? const [];
 
   String get deviceName => DeviceIdentityService.instance.displayName;
+
+  void _syncScreenWake() {
+    unawaited(
+      ScreenWakeService.instance.setRoomActive(_session != null && !_disposed),
+    );
+  }
 
   Future<String> _persistentDeviceId() =>
       DeviceIdentityService.instance.getDeviceId();
@@ -114,6 +145,7 @@ class TransferSessionController extends ChangeNotifier {
 
       await _beginSignaling(roomCode: roomCode, localPeerId: peerId);
 
+      _syncScreenWake();
       _waitForGuest(roomCode, peerId);
       notifyListeners();
       return _session!;
@@ -204,6 +236,7 @@ class TransferSessionController extends ChangeNotifier {
       _scheduleConnectionWatch();
 
       unawaited(_persistPairIfNeeded());
+      _syncScreenWake();
       notifyListeners();
       return _session!;
     } catch (e) {
@@ -264,6 +297,7 @@ class TransferSessionController extends ChangeNotifier {
       );
 
       _waitForGuest(roomCode, peerId);
+      _syncScreenWake();
       notifyListeners();
       return _session!;
     } catch (e) {
@@ -317,6 +351,7 @@ class TransferSessionController extends ChangeNotifier {
       );
 
       _waitForGuest(resolvedRoomCode, peerId);
+      _syncScreenWake();
       notifyListeners();
       return _session!;
     } catch (e) {
@@ -412,6 +447,7 @@ class TransferSessionController extends ChangeNotifier {
 
   String _guessPeerPlatform(String? displayName) {
     final name = (displayName ?? '').toLowerCase();
+    if (name.contains('android')) return 'android';
     if (name.contains('mac')) return 'macos';
     if (name.contains('windows') || name.contains('pc')) return 'windows';
     if (name.contains('iphone') || name.contains('ipad') || name.contains('ios')) {
@@ -718,6 +754,7 @@ class TransferSessionController extends ChangeNotifier {
     _connectionState = WebRtcConnectionState.idle;
     _disconnecting = false;
     _disposed = true;
+    _syncScreenWake();
   }
 
   void _setBusy(bool value) {
@@ -763,6 +800,7 @@ class TransferSessionController extends ChangeNotifier {
     } catch (_) {}
 
     _session = null;
+    _syncScreenWake();
   }
 
   @override
