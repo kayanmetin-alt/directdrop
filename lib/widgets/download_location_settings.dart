@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../services/download_directory_service.dart';
+import '../utils/file_location_opener.dart';
 
 class DownloadLocationSettings extends StatefulWidget {
   const DownloadLocationSettings({super.key});
@@ -31,7 +32,7 @@ class _DownloadLocationSettingsState extends State<DownloadLocationSettings> {
   }
 
   void _onChanged() {
-    _refreshPath();
+    unawaited(_refreshPath());
   }
 
   Future<void> _refreshPath() async {
@@ -39,33 +40,27 @@ class _DownloadLocationSettingsState extends State<DownloadLocationSettings> {
     if (mounted) setState(() => _displayPath = path);
   }
 
-  Future<void> _pickFolder() async {
+  Future<void> _openFolder() async {
     setState(() => _busy = true);
     try {
-      await _service.pickDirectory();
-      if (mounted) {
+      final dir = await _service.ensureDownloadsDirectory();
+      final ok = await FileLocationOpener.openDownloadsFolder(dir.path);
+      if (!mounted) return;
+      if (!ok) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('İndirme klasörü güncellendi.')),
+          SnackBar(
+            content: Text(
+              'Klasör açılamadı. Dosyalar uygulamasında şu konuma bakın:\n'
+              '$_displayPath',
+            ),
+            duration: const Duration(seconds: 5),
+          ),
         );
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Klasör seçilemedi: $e')),
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  Future<void> _resetFolder() async {
-    setState(() => _busy = true);
-    try {
-      await _service.resetToDefault();
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Varsayılan indirme klasörü kullanılıyor.')),
+          SnackBar(content: Text('Klasör açılamadı: $e')),
         );
       }
     } finally {
@@ -100,38 +95,33 @@ class _DownloadLocationSettingsState extends State<DownloadLocationSettings> {
             ),
             const SizedBox(height: 8),
             Text(
-              _displayPath,
-              maxLines: 3,
-              overflow: TextOverflow.ellipsis,
+              'İndirilen dosyalar her zaman şu konuma kaydedilir:',
               style: theme.textTheme.bodySmall?.copyWith(
                 color: theme.colorScheme.onSurfaceVariant,
               ),
             ),
+            const SizedBox(height: 8),
+            SelectableText(
+              _displayPath,
+              style: theme.textTheme.bodyMedium?.copyWith(
+                fontFamily: 'monospace',
+                fontSize: 12,
+              ),
+            ),
             const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: _busy ? null : _pickFolder,
-                    icon: _busy
-                        ? const SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.drive_folder_upload_outlined),
-                    label: const Text('Klasör seç'),
-                  ),
-                ),
-                if (_service.hasCustomPath) ...[
-                  const SizedBox(width: 8),
-                  IconButton(
-                    onPressed: _busy ? null : _resetFolder,
-                    tooltip: 'Varsayılana dön',
-                    icon: const Icon(Icons.restore),
-                  ),
-                ],
-              ],
+            FilledButton.icon(
+              onPressed: _busy ? null : _openFolder,
+              icon: _busy
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
+                    )
+                  : const Icon(Icons.folder_open_outlined),
+              label: const Text('Klasörü aç'),
             ),
           ],
         ),
