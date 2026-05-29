@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 
 import '../services/download_directory_service.dart';
@@ -48,9 +50,11 @@ class _DownloadLocationSettingsState extends State<DownloadLocationSettings> {
       if (!mounted) return;
       if (!ok) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
+            SnackBar(
             content: Text(
-              'Dosyalar uygulaması açılamadı. Manuel gidin:\n$_displayPath',
+              Platform.isAndroid
+                  ? 'Dosya yöneticisi açılamadı. Manuel gidin:\n$_displayPath'
+                  : 'Dosyalar uygulaması açılamadı. Manuel gidin:\n$_displayPath',
             ),
             duration: const Duration(seconds: 6),
           ),

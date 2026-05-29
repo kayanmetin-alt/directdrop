@@ -22,6 +22,15 @@ class TransferRejectedException implements Exception {
   String toString() => message;
 }
 
+class TransferCancelledException implements Exception {
+  TransferCancelledException([this.message = 'Transfer iptal edildi']);
+
+  final String message;
+
+  @override
+  String toString() => message;
+}
+
 class FileTransferService {
   FileTransferService({required WebRtcService webRtc}) : _webRtc = webRtc {
     _subscription = _webRtc.incomingData.listen((raw) {
@@ -51,6 +60,8 @@ class FileTransferService {
   final Map<String, Completer<void>> _pendingAcks = {};
   final Map<String, Completer<void>> _pendingReady = {};
   final Map<String, Completer<void>> _pendingPongs = {};
+  final Set<String> _pausedFileIds = {};
+  final Set<String> _cancelledFileIds = {};
   String? _activeSendFileId;
   bool _sending = false;
   Future<void> _incomingChain = Future.value();
@@ -121,6 +132,107 @@ class FileTransferService {
     await _sendControl({'type': 'file_start_reject', 'fileId': fileId});
   }
 
+  Future<void> pauseTransfer(String fileId) async {
+    final item = _itemById(fileId);
+    if (item == null || item.status != TransferStatus.inProgress) return;
+
+    _pausedFileIds.add(fileId);
+    item.status = TransferStatus.paused;
+    _emit();
+    await _sendControl({'type': 'file_pause', 'fileId': fileId});
+  }
+
+  Future<void> resumeTransfer(String fileId) async {
+    final item = _itemById(fileId);
+    if (item == null || item.status != TransferStatus.paused) return;
+
+    _pausedFileIds.remove(fileId);
+    item.status = TransferStatus.inProgress;
+    _emit();
+    await _sendControl({'type': 'file_resume', 'fileId': fileId});
+  }
+
+  Future<void> cancelTransfer(String fileId) async {
+    final item = _itemById(fileId);
+    if (item == null || !_isActiveTransfer(item)) return;
+
+    _cancelledFileIds.add(fileId);
+    _pausedFileIds.remove(fileId);
+    await _abortTransfer(fileId, notifyPeer: true, message: 'İptal edildi');
+  }
+
+  TransferFileItem? _itemById(String fileId) {
+    for (final item in _items) {
+      if (item.id == fileId) return item;
+    }
+    return null;
+  }
+
+  bool _isActiveTransfer(TransferFileItem item) {
+    return item.status == TransferStatus.inProgress ||
+        item.status == TransferStatus.paused;
+  }
+
+  Future<void> _waitWhilePausedOrCancelled(String fileId) async {
+    while (_pausedFileIds.contains(fileId)) {
+      if (_cancelledFileIds.contains(fileId)) {
+        throw TransferCancelledException();
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+    }
+    if (_cancelledFileIds.contains(fileId)) {
+      throw TransferCancelledException();
+    }
+  }
+
+  Future<void> _abortTransfer(
+    String fileId, {
+    required bool notifyPeer,
+    required String message,
+  }) async {
+    _pendingIncoming.remove(fileId);
+
+    final context = _receiveContexts.remove(fileId);
+    if (context != null) {
+      try {
+        await context.raf.close();
+      } catch (_) {}
+      final path = context.item.localPath;
+      if (path != null) {
+        try {
+          await File(path).delete();
+        } catch (_) {}
+      }
+    }
+
+    _clearPendingOperationsForFile(fileId);
+
+    if (notifyPeer) {
+      try {
+        await _sendControl({'type': 'file_cancel', 'fileId': fileId});
+      } catch (_) {}
+    }
+
+    final item = _itemById(fileId);
+    if (item != null && _isActiveTransfer(item)) {
+      item.status = TransferStatus.cancelled;
+      item.errorMessage = message;
+      _emit();
+    }
+
+    _pausedFileIds.remove(fileId);
+  }
+
+  void _clearPendingOperationsForFile(String fileId) {
+    _pendingReady.remove(fileId)?.completeError(TransferCancelledException());
+    final ackKeys = _pendingAcks.keys
+        .where((key) => key.startsWith('$fileId:'))
+        .toList(growable: false);
+    for (final key in ackKeys) {
+      _pendingAcks.remove(key)?.completeError(TransferCancelledException());
+    }
+  }
+
   Future<void> _sendFile(String filePath) async {
     final file = File(filePath);
     if (!await file.exists()) {
@@ -176,6 +288,8 @@ class FileTransferService {
         var offset = 0;
         var chunkIndex = 0;
         while (offset < stat.size) {
+          await _waitWhilePausedOrCancelled(fileId);
+
           final remaining = stat.size - offset;
           final readSize = remaining < chunkSize ? remaining : chunkSize;
           final buffer = Uint8List(readSize);
@@ -207,12 +321,19 @@ class FileTransferService {
     } on TransferRejectedException catch (e) {
       item.status = TransferStatus.cancelled;
       item.errorMessage = e.message;
+    } on TransferCancelledException catch (e) {
+      if (item.status != TransferStatus.cancelled) {
+        item.status = TransferStatus.cancelled;
+        item.errorMessage = e.message;
+      }
     } catch (e) {
       item.status = TransferStatus.failed;
       item.errorMessage = e.toString();
       rethrow;
     } finally {
       _pendingReady.remove(fileId);
+      _pausedFileIds.remove(fileId);
+      _cancelledFileIds.remove(fileId);
       _activeSendFileId = null;
       _sending = false;
       _emit();
@@ -274,6 +395,32 @@ class FileTransferService {
         if (completer != null && !completer.isCompleted) {
           completer.completeError(TransferRejectedException());
         }
+      case 'file_pause':
+        final pauseFileId = payload['fileId'] as String;
+        _pausedFileIds.add(pauseFileId);
+        final pausedItem = _itemById(pauseFileId);
+        if (pausedItem != null &&
+            pausedItem.status == TransferStatus.inProgress) {
+          pausedItem.status = TransferStatus.paused;
+          _emit();
+        }
+      case 'file_resume':
+        final resumeFileId = payload['fileId'] as String;
+        _pausedFileIds.remove(resumeFileId);
+        final resumedItem = _itemById(resumeFileId);
+        if (resumedItem != null && resumedItem.status == TransferStatus.paused) {
+          resumedItem.status = TransferStatus.inProgress;
+          _emit();
+        }
+      case 'file_cancel':
+        final cancelFileId = payload['fileId'] as String;
+        _cancelledFileIds.add(cancelFileId);
+        _pausedFileIds.remove(cancelFileId);
+        await _abortTransfer(
+          cancelFileId,
+          notifyPeer: false,
+          message: 'Karşı taraf iptal etti',
+        );
       case 'file_end':
         await _finishReceive(payload['id'] as String);
       case 'chunk_ack':
@@ -409,6 +556,8 @@ class FileTransferService {
     _pendingPongs.clear();
     _pendingAcks.clear();
     _pendingIncoming.clear();
+    _pausedFileIds.clear();
+    _cancelledFileIds.clear();
     for (final context in _receiveContexts.values) {
       await context.raf.close();
     }

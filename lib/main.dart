@@ -16,6 +16,7 @@ import 'services/notification_service.dart';
 import 'services/paired_devices_service.dart';
 import 'services/session_cleanup_service.dart';
 import 'services/active_session_registry.dart';
+import 'services/paired_auto_connect_service.dart';
 import 'services/recent_connection_service.dart';
 import 'services/transfer_history_service.dart';
 import 'screens/recent_connect_screen.dart';
@@ -64,6 +65,7 @@ Future<void> main() async {
       unawaited(AppVersionService.instance.load());
       unawaited(_startBackgroundServices());
       _wireAutoReconnect();
+      _wireNotificationWake();
     }
   } catch (e, stack) {
     startupError = 'Uygulama başlatılamadı: $e';
@@ -82,6 +84,12 @@ Future<void> _startBackgroundServices() async {
   } catch (e, stack) {
     debugPrint('Arka plan servisleri başlatılamadı: $e\n$stack');
   }
+}
+
+void _wireNotificationWake() {
+  NotificationService.instance.onWakeNotificationTapped = (request) {
+    unawaited(PairedAutoConnectService.instance.handleIncomingWake(request));
+  };
 }
 
 void _wireAutoReconnect() {
@@ -188,6 +196,8 @@ class _StartupErrorScreen extends StatelessWidget {
               const Text('• Uygulamayı kapatıp yeniden açın'),
               if (Platform.isIOS)
                 const Text('• Xcode → Signing & Capabilities → Team seçili olsun'),
+              if (Platform.isAndroid)
+                const Text('• google-services.json ve Firebase Android uygulaması tanımlı olsun'),
               if (Platform.isMacOS)
                 const Text(
                   '• Keychain Access uygulamasında "DirectDrop" veya '

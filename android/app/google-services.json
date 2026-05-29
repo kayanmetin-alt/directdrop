@@ -1,0 +1,30 @@
+{
+  "project_info": {
+    "project_number": "866944055436",
+    "firebase_url": "https://personaltrainer-77e4c-default-rtdb.europe-west1.firebasedatabase.app",
+    "project_id": "personaltrainer-77e4c",
+    "storage_bucket": "personaltrainer-77e4c.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:866944055436:android:52c9aedf72a5d9c72f63a9",
+        "android_client_info": {
+          "package_name": "com.directdrop.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAq5jaYyvvaQKTYZP_w0SE3HaU3RPMD0x0"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

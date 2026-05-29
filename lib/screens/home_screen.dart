@@ -64,6 +64,8 @@ class _HomeScreenState extends State<HomeScreen> {
         return Icons.laptop_mac;
       case 'windows':
         return Icons.desktop_windows;
+      case 'android':
+        return Icons.phone_android;
       default:
         return Icons.devices;
     }

@@ -52,6 +52,8 @@ import UIKit
         result(FlutterMethodNotImplemented)
       }
     }
+
+    MediaPickerChannel.register(with: controller, messenger: controller.binaryMessenger)
   }
 
   /// Dosyalar uygulamasında DirectDrop indirme klasörünü açar.

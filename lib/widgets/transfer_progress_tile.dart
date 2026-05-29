@@ -10,9 +10,19 @@ class TransferProgressTile extends StatelessWidget {
   const TransferProgressTile({
     super.key,
     required this.item,
+    this.onPauseToggle,
+    this.onCancel,
   });
 
   final TransferFileItem item;
+  final VoidCallback? onPauseToggle;
+  final VoidCallback? onCancel;
+
+  bool get _showTransferControls =>
+      onPauseToggle != null &&
+      onCancel != null &&
+      (item.status == TransferStatus.inProgress ||
+          item.status == TransferStatus.paused);
 
   String _statusLabel() {
     switch (item.status) {
@@ -24,6 +34,8 @@ class TransferProgressTile extends StatelessWidget {
         return item.direction == TransferDirection.sending
             ? 'Gönderiliyor'
             : 'Alınıyor';
+      case TransferStatus.paused:
+        return 'Duraklatıldı';
       case TransferStatus.verifying:
         return 'Doğrulanıyor';
       case TransferStatus.completed:
@@ -44,6 +56,8 @@ class TransferProgressTile extends StatelessWidget {
       case TransferStatus.inProgress:
       case TransferStatus.verifying:
         return Icons.sync;
+      case TransferStatus.paused:
+        return Icons.pause_circle_outline;
       default:
         return Icons.insert_drive_file_outlined;
     }
@@ -108,6 +122,8 @@ class TransferProgressTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
     return Card(
       margin: const EdgeInsets.symmetric(vertical: 6),
       child: Padding(
@@ -127,11 +143,11 @@ class TransferProgressTile extends StatelessWidget {
                         item.name,
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
-                        style: Theme.of(context).textTheme.titleSmall,
+                        style: theme.textTheme.titleSmall,
                       ),
                       Text(
                         '${_formatBytes(item.bytesTransferred)} / ${_formatBytes(item.size)} · ${_statusLabel()}',
-                        style: Theme.of(context).textTheme.bodySmall,
+                        style: theme.textTheme.bodySmall,
                       ),
                     ],
                   ),
@@ -144,25 +160,59 @@ class TransferProgressTile extends StatelessWidget {
                     icon: Icon(_revealIcon),
                     tooltip: _revealTooltip,
                   ),
-                  if (Platform.isIOS)
+                  if (Platform.isIOS || Platform.isAndroid)
                     IconButton(
                       onPressed: () => _shareFile(context),
-                      icon: const Icon(Icons.ios_share),
+                      icon: Icon(
+                        Platform.isIOS ? Icons.ios_share : Icons.share_outlined,
+                      ),
                       tooltip: 'Dosyayı paylaş',
                     ),
                 ],
               ],
             ),
             if (item.status == TransferStatus.inProgress ||
+                item.status == TransferStatus.paused ||
                 item.status == TransferStatus.verifying) ...[
               const SizedBox(height: 12),
-              LinearProgressIndicator(value: item.progress.clamp(0.0, 1.0)),
+              Row(
+                children: [
+                  Expanded(
+                    child: LinearProgressIndicator(
+                      value: item.progress.clamp(0.0, 1.0),
+                    ),
+                  ),
+                  if (_showTransferControls) ...[
+                    IconButton(
+                      onPressed: onPauseToggle,
+                      icon: Icon(
+                        item.status == TransferStatus.paused
+                            ? Icons.play_arrow_rounded
+                            : Icons.pause_rounded,
+                      ),
+                      tooltip: item.status == TransferStatus.paused
+                          ? 'Devam et'
+                          : 'Duraklat',
+                      visualDensity: VisualDensity.compact,
+                    ),
+                    IconButton(
+                      onPressed: onCancel,
+                      icon: Icon(
+                        Icons.close_rounded,
+                        color: theme.colorScheme.error,
+                      ),
+                      tooltip: 'İptal',
+                      visualDensity: VisualDensity.compact,
+                    ),
+                  ],
+                ],
+              ),
             ],
             if (item.errorMessage != null) ...[
               const SizedBox(height: 8),
               Text(
                 item.errorMessage!,
-                style: TextStyle(color: Theme.of(context).colorScheme.error),
+                style: TextStyle(color: theme.colorScheme.error),
               ),
             ],
           ],

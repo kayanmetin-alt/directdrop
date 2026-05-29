@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 
 import '../firebase_options.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 import '../models/paired_device.dart';
 import 'device_registry_service.dart';
@@ -71,6 +72,13 @@ class NotificationService {
           badge: true,
           sound: true,
         );
+      }
+
+      if (Platform.isAndroid) {
+        final status = await Permission.notification.request();
+        if (!status.isGranted) {
+          debugPrint('Android bildirim izni verilmedi.');
+        }
       }
 
       FirebaseMessaging.onMessage.listen((message) {

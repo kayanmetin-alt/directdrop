@@ -7,6 +7,13 @@ class AppDelegate: FlutterAppDelegate {
     return true
   }
 
+  override func applicationWillTerminate(_ notification: Notification) {
+    if let window = NSApp.mainWindow {
+      WindowFrameStorage.save(from: window)
+    }
+    super.applicationWillTerminate(notification)
+  }
+
   override func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool {
     return true
   }

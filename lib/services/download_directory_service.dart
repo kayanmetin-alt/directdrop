@@ -36,6 +36,9 @@ class DownloadDirectoryService extends ChangeNotifier {
     if (Platform.isIOS) {
       return 'Dosyalar → iPhone\'umda → DirectDrop → DirectDrop → Downloads';
     }
+    if (Platform.isAndroid) {
+      return 'Dosyalar → DirectDrop → Downloads (uygulama klasörü)';
+    }
     if (Platform.isMacOS) {
       final dir = await downloadsDirectory();
       return dir.path;

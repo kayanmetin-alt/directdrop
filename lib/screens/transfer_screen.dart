@@ -1,11 +1,11 @@
 import 'dart:io';
 
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../models/transfer_file.dart';
 import '../providers/transfer_session_controller.dart';
+import '../services/send_file_picker_service.dart';
 import '../services/webrtc_service.dart';
 import '../services/transfer_history_service.dart';
 import '../services/active_session_registry.dart';
@@ -125,24 +125,12 @@ class _TransferScreenState extends State<TransferScreen>
 
     try {
       await _activateAppWindow();
+      if (!mounted) return;
 
-      final result = await FilePicker.platform.pickFiles(
-        allowMultiple: true,
-        withReadStream: false,
-        dialogTitle: 'Gönderilecek dosyaları seçin',
-      );
+      final paths = await SendFilePickerService.pickWithSourceChoice(context);
 
-      if (result == null || result.files.isEmpty) {
+      if (paths == null || paths.isEmpty) {
         return;
-      }
-
-      final paths = result.files
-          .where((f) => f.path != null)
-          .map((f) => f.path!)
-          .toList();
-
-      if (paths.isEmpty) {
-        throw StateError('Seçilen dosyaların yolu alınamadı.');
       }
 
       await _controller.sendFilePaths(paths);
@@ -232,6 +220,7 @@ class _TransferScreenState extends State<TransferScreen>
           (item) =>
               item.status == TransferStatus.awaitingApproval ||
               item.status == TransferStatus.inProgress ||
+              item.status == TransferStatus.paused ||
               item.status == TransferStatus.verifying ||
               item.status == TransferStatus.pending,
         )
@@ -281,7 +270,17 @@ class _TransferScreenState extends State<TransferScreen>
         item: item,
       );
     }
-    return TransferProgressTile(item: item);
+    return TransferProgressTile(
+      item: item,
+      onPauseToggle: item.status == TransferStatus.inProgress ||
+              item.status == TransferStatus.paused
+          ? () => _controller.togglePauseTransfer(item.id)
+          : null,
+      onCancel: item.status == TransferStatus.inProgress ||
+              item.status == TransferStatus.paused
+          ? () => _controller.cancelTransfer(item.id)
+          : null,
+    );
   }
 
   @override

@@ -9,9 +9,9 @@ import 'package:path/path.dart' as p;
 class FileLocationOpener {
   const FileLocationOpener._();
 
-  static const _iosFilesChannel = MethodChannel('com.directdrop.app/files');
+  static const _mobileFilesChannel = MethodChannel('com.directdrop.app/files');
 
-  /// İndirme klasörünü dosya yöneticisinde (veya iOS’ta Dosyalar’da) açar.
+  /// İndirme klasörünü dosya yöneticisinde (veya iOS/Android Dosyalar'da) açar.
   static Future<bool> openDownloadsFolder(String dirPath) async {
     final dir = Directory(dirPath);
     if (!await dir.exists()) {
@@ -19,14 +19,19 @@ class FileLocationOpener {
     }
 
     try {
-      if (Platform.isIOS) {
+      if (Platform.isIOS || Platform.isAndroid) {
         try {
-          final opened = await _iosFilesChannel.invokeMethod<bool>(
+          final opened = await _mobileFilesChannel.invokeMethod<bool>(
             'openDownloadsFolder',
+            {'path': dirPath},
           );
           return opened == true;
         } on PlatformException catch (e) {
-          debugPrint('iOS klasör açma: ${e.code} ${e.message}');
+          debugPrint('Mobil klasör açma: ${e.code} ${e.message}');
+          if (Platform.isAndroid) {
+            final result = await OpenFile.open(dirPath);
+            return result.type == ResultType.done;
+          }
           return false;
         }
       }
@@ -45,11 +50,6 @@ class FileLocationOpener {
       if (Platform.isLinux) {
         await Process.run('xdg-open', [dirPath]);
         return true;
-      }
-
-      if (Platform.isAndroid) {
-        final result = await OpenFile.open(dirPath);
-        return result.type == ResultType.done;
       }
 
       return false;
@@ -84,7 +84,19 @@ class FileLocationOpener {
         return true;
       }
 
-      // iOS: klasör açılamaz; dosyayı sistemde aç.
+      if (Platform.isAndroid) {
+        try {
+          final opened = await _mobileFilesChannel.invokeMethod<bool>(
+            'openSavedFile',
+            {'path': filePath},
+          );
+          if (opened == true) return true;
+        } on PlatformException catch (e) {
+          debugPrint('Android dosya açma: ${e.code} ${e.message}');
+        }
+      }
+
+      // iOS / Android yedek: dosyayı sistemde aç.
       final result = await OpenFile.open(filePath);
       return result.type == ResultType.done;
     } catch (e, stack) {

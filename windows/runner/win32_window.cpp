@@ -4,6 +4,7 @@
 #include <flutter_windows.h>
 
 #include "resource.h"
+#include "window_frame_storage.h"
 
 namespace {
 
@@ -146,6 +147,8 @@ bool Win32Window::Create(const std::wstring& title,
 
   UpdateTheme(window);
 
+  WindowFrameStorage::Restore(window);
+
   return OnCreate();
 }
 
@@ -206,6 +209,14 @@ Win32Window::MessageHandler(HWND hwnd,
       }
       return 0;
     }
+
+    case WM_EXITSIZEMOVE:
+      WindowFrameStorage::Save(hwnd);
+      return 0;
+
+    case WM_CLOSE:
+      WindowFrameStorage::Save(hwnd);
+      break;
 
     case WM_ACTIVATE:
       if (child_content_ != nullptr) {

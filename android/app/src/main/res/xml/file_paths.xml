@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <files-path name="directdrop_app_flutter" path="app_flutter/DirectDrop/" />
+    <files-path name="directdrop_downloads" path="app_flutter/DirectDrop/Downloads/" />
+    <files-path name="directdrop_legacy" path="DirectDrop/" />
+    <cache-path name="directdrop_cache" path="DirectDrop/" />
+</paths>

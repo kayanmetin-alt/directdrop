@@ -4,6 +4,7 @@ enum TransferStatus {
   pending,
   awaitingApproval,
   inProgress,
+  paused,
   verifying,
   completed,
   failed,

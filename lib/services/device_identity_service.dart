@@ -33,6 +33,7 @@ class DeviceIdentityService {
 
   String get platformLabel {
     if (Platform.isIOS) return 'ios';
+    if (Platform.isAndroid) return 'android';
     if (Platform.isMacOS) return 'macos';
     if (Platform.isWindows) return 'windows';
     return 'other';
@@ -40,6 +41,7 @@ class DeviceIdentityService {
 
   String get displayName {
     if (Platform.isIOS) return 'iPhone';
+    if (Platform.isAndroid) return 'Android';
     if (Platform.isMacOS) return 'Mac';
     if (Platform.isWindows) return 'Windows';
     return 'DirectDrop';
