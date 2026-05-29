@@ -42,7 +42,7 @@ class _HostScreenState extends State<HostScreen> {
   void dispose() {
     ActiveSessionRegistry.instance.unregister(_controller);
     if (!_controller.isDisposed) {
-      unawaited(_controller.dispose());
+      _controller.dispose();
     }
     super.dispose();
   }
