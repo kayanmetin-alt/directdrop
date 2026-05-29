@@ -56,6 +56,7 @@ class TransferSessionController extends ChangeNotifier {
   String? get errorMessage => _errorMessage;
   bool get isBusy => _busy;
   bool get isReconnecting => _reconnecting;
+  bool get isDisposed => _disposed;
   bool get isConnected =>
       _connectionState == WebRtcConnectionState.connected &&
       (_webRtc?.isDataChannelOpen ?? false);
@@ -587,21 +588,46 @@ class TransferSessionController extends ChangeNotifier {
     _connectionWatchTimer?.cancel();
     _deferredReconnectTimer?.cancel();
     _deferredReconnectTimer = null;
-    await _connectionSubscription?.cancel();
-    _connectionSubscription = null;
-    await _fileTransfer?.dispose();
-    await _webRtc?.dispose();
-    if (_session != null) {
-      await _signaling.closeRoom();
-    }
-    await _signaling.dispose();
 
+    try {
+      await _connectionSubscription?.cancel();
+    } catch (e) {
+      debugPrint('disconnect subscription: $e');
+    }
+    _connectionSubscription = null;
+
+    try {
+      await _fileTransfer?.dispose();
+    } catch (e) {
+      debugPrint('disconnect fileTransfer: $e');
+    }
     _fileTransfer = null;
+
+    try {
+      await _webRtc?.dispose();
+    } catch (e) {
+      debugPrint('disconnect webRtc: $e');
+    }
     _webRtc = null;
+
+    try {
+      if (_session != null) {
+        await _signaling.closeRoom();
+      }
+    } catch (e) {
+      debugPrint('disconnect closeRoom: $e');
+    }
+
+    try {
+      await _signaling.dispose();
+    } catch (e) {
+      debugPrint('disconnect signaling: $e');
+    }
+
     _session = null;
     _connectionState = WebRtcConnectionState.idle;
     _disconnecting = false;
-    if (!_disposed) notifyListeners();
+    _disposed = true;
   }
 
   void _setBusy(bool value) {
@@ -615,18 +641,37 @@ class TransferSessionController extends ChangeNotifier {
     _connectionWatchTimer?.cancel();
     _deferredReconnectTimer?.cancel();
     _deferredReconnectTimer = null;
-    await _transferSubscription?.cancel();
+
+    try {
+      await _transferSubscription?.cancel();
+    } catch (_) {}
     _transferSubscription = null;
-    await _connectionSubscription?.cancel();
+
+    try {
+      await _connectionSubscription?.cancel();
+    } catch (_) {}
     _connectionSubscription = null;
-    await _fileTransfer?.dispose();
-    await _webRtc?.dispose();
-    if (_session != null) {
-      await _signaling.closeRoom();
-    }
-    await _signaling.dispose();
+
+    try {
+      await _fileTransfer?.dispose();
+    } catch (_) {}
     _fileTransfer = null;
+
+    try {
+      await _webRtc?.dispose();
+    } catch (_) {}
     _webRtc = null;
+
+    try {
+      if (_session != null) {
+        await _signaling.closeRoom();
+      }
+    } catch (_) {}
+
+    try {
+      await _signaling.dispose();
+    } catch (_) {}
+
     _session = null;
   }
 

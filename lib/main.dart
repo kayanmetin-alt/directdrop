@@ -13,6 +13,8 @@ import 'services/app_version_service.dart';
 import 'services/download_directory_service.dart';
 import 'services/firebase_auth_service.dart';
 import 'services/notification_service.dart';
+import 'services/session_cleanup_service.dart';
+import 'services/active_session_registry.dart';
 import 'services/transfer_history_service.dart';
 
 Future<void> main() async {
@@ -47,6 +49,7 @@ Future<void> main() async {
     }
 
     if (startupError == null) {
+      await SessionCleanupService.instance.resetOnLaunch();
       try {
         await NotificationService.instance.initialize();
       } catch (e, stack) {
@@ -102,6 +105,8 @@ class _DirectDropAppState extends State<DirectDropApp> with WidgetsBindingObserv
           debugPrint('Auth yenileme: $e');
         }),
       );
+    } else if (state == AppLifecycleState.detached) {
+      unawaited(ActiveSessionRegistry.instance.disconnectActive());
     }
   }
 

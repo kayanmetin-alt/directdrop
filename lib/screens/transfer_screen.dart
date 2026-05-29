@@ -8,6 +8,7 @@ import '../models/transfer_file.dart';
 import '../providers/transfer_session_controller.dart';
 import '../services/webrtc_service.dart';
 import '../services/transfer_history_service.dart';
+import '../services/active_session_registry.dart';
 import '../widgets/active_transfer_tile.dart';
 import '../widgets/desktop_file_drop_overlay.dart';
 import '../widgets/download_location_settings.dart';
@@ -153,10 +154,17 @@ class _TransferScreenState extends State<TransferScreen>
   }
 
   Future<void> _disconnect() async {
-    await _controller.disconnect();
-    if (mounted) {
-      Navigator.of(context).popUntil((route) => route.isFirst);
+    if (!mounted) return;
+    try {
+      ActiveSessionRegistry.instance.unregister(_controller);
+      if (!_controller.isDisposed) {
+        await _controller.disconnect();
+      }
+    } catch (e) {
+      debugPrint('Bağlantı kapatma: $e');
     }
+    if (!mounted) return;
+    Navigator.of(context).popUntil((route) => route.isFirst);
   }
 
   Future<void> _confirmClearHistory() async {
@@ -246,14 +254,23 @@ class _TransferScreenState extends State<TransferScreen>
     return ListenableBuilder(
       listenable: _controller,
       builder: (context, _) {
-        final session = _controller.session!;
+        final session = _controller.session;
+        if (session == null) {
+          return const SizedBox.shrink();
+        }
         final liveTransfers = _controller.fileTransfer?.items ?? [];
         final activeTransfers = _activeTransfers(liveTransfers);
         final history = _historyEntries();
         final peerLabel =
             widget.peerDisplayName ?? _controller.peerDisplayName ?? 'Cihaz';
 
-        return Scaffold(
+        return PopScope(
+          canPop: false,
+          onPopInvokedWithResult: (didPop, result) async {
+            if (didPop) return;
+            await _disconnect();
+          },
+          child: Scaffold(
           appBar: AppBar(
             title: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -416,6 +433,7 @@ class _TransferScreenState extends State<TransferScreen>
               ],
             ),
           ),
+        ),
         ),
         );
       },

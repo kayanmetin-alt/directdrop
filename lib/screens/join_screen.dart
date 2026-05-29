@@ -27,8 +27,10 @@ class _JoinScreenState extends State<JoinScreen> {
     _codeController.dispose();
     if (_controller != null) {
       ActiveSessionRegistry.instance.unregister(_controller!);
+      if (!_controller!.isDisposed) {
+        _controller!.dispose();
+      }
     }
-    _controller?.dispose();
     super.dispose();
   }
 
