@@ -3,6 +3,7 @@ package com.directdrop.app
 import android.app.Activity
 import android.content.Intent
 import android.net.Uri
+import android.os.Environment
 import android.provider.DocumentsContract
 import android.provider.OpenableColumns
 import androidx.core.content.FileProvider
@@ -157,33 +158,94 @@ class MainActivity : FlutterActivity() {
         return null
     }
 
+    private fun defaultDownloadsDirectory(): File {
+        val publicDownloads = Environment.getExternalStoragePublicDirectory(
+            Environment.DIRECTORY_DOWNLOADS
+        )
+        if (publicDownloads != null) {
+            return File(publicDownloads, "DirectDrop").apply { mkdirs() }
+        }
+        return File(File(filesDir, "app_flutter"), "DirectDrop/Downloads").apply { mkdirs() }
+    }
+
     private fun downloadsDirectory(customPath: String? = null): File {
         if (!customPath.isNullOrBlank()) {
             return File(customPath).apply { mkdirs() }
         }
-        // path_provider getApplicationDocumentsDirectory() → filesDir/app_flutter
-        return File(File(filesDir, "app_flutter"), "DirectDrop/Downloads").apply { mkdirs() }
+        return defaultDownloadsDirectory()
     }
 
     private fun openDownloadsFolder(customPath: String? = null): Boolean {
+        val downloadsDir = downloadsDirectory(customPath)
+        downloadsDir.mkdirs()
+
+        if (tryOpenPublicDownloadsInFilesApp(downloadsDir)) return true
+
+        val latest = downloadsDir.listFiles()
+            ?.filter { it.isFile && !it.name.startsWith('.') }
+            ?.maxByOrNull { it.lastModified() }
+        if (latest != null && openSavedFile(latest.absolutePath)) return true
+
+        return tryOpenViaFileProvider(downloadsDir)
+    }
+
+    private fun tryOpenPublicDownloadsInFilesApp(dir: File): Boolean {
+        val relative = relativeDownloadPath(dir) ?: return false
+
+        val docIds = listOf(
+            "primary:Download/$relative",
+            "primary:Download"
+        )
+
+        for (docId in docIds) {
+            val uri = DocumentsContract.buildDocumentUri(
+                "com.android.externalstorage.documents",
+                docId
+            )
+            if (launchViewIntent(uri, DocumentsContract.Document.MIME_TYPE_DIR)) {
+                return true
+            }
+            if (launchViewIntent(uri, "*/*")) {
+                return true
+            }
+        }
+        return false
+    }
+
+    private fun relativeDownloadPath(dir: File): String? {
+        val normalized = dir.absolutePath.replace('\\', '/')
+        val marker = "/Download/"
+        val index = normalized.indexOf(marker)
+        if (index < 0) return null
+        return normalized.substring(index + marker.length).trim('/')
+    }
+
+    private fun tryOpenViaFileProvider(dir: File): Boolean {
         return try {
-            val downloadsDir = downloadsDirectory(customPath)
+            val marker = File(dir, ".directdrop_folder").apply {
+                if (!exists()) writeText("DirectDrop")
+            }
             val uri = FileProvider.getUriForFile(
                 this,
                 "${applicationContext.packageName}.fileprovider",
-                downloadsDir
+                marker
             )
-            val intent = Intent(Intent.ACTION_VIEW).apply {
-                setDataAndType(uri, DocumentsContract.Document.MIME_TYPE_DIR)
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            }
-            if (intent.resolveActivity(packageManager) != null) {
-                startActivity(intent)
-                true
-            } else {
-                openDownloadsFallback(downloadsDir)
-            }
+            launchViewIntent(uri, "*/*")
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private fun launchViewIntent(uri: Uri, mime: String): Boolean {
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, mime)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        if (intent.resolveActivity(packageManager) == null) return false
+        return try {
+            startActivity(intent)
+            true
         } catch (_: Exception) {
             false
         }
@@ -211,20 +273,6 @@ class MainActivity : FlutterActivity() {
             }
             if (intent.resolveActivity(packageManager) == null) return false
             startActivity(Intent.createChooser(intent, file.name))
-            true
-        } catch (_: Exception) {
-            false
-        }
-    }
-
-    private fun openDownloadsFallback(downloadsDir: File): Boolean {
-        return try {
-            val intent = Intent(Intent.ACTION_GET_CONTENT).apply {
-                type = "*/*"
-                addCategory(Intent.CATEGORY_OPENABLE)
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            }
-            startActivity(Intent.createChooser(intent, "İndirilen dosyalar"))
             true
         } catch (_: Exception) {
             false

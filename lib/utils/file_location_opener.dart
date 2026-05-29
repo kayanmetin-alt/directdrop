@@ -25,7 +25,15 @@ class FileLocationOpener {
             'openDownloadsFolder',
             {'path': dirPath},
           );
-          return opened == true;
+          if (opened == true) return true;
+
+          if (Platform.isAndroid) {
+            final latest = await _latestFileInDirectory(dirPath);
+            if (latest != null) {
+              return revealSavedFile(latest);
+            }
+          }
+          return false;
         } on PlatformException catch (e) {
           debugPrint('Mobil klasör açma: ${e.code} ${e.message}');
           if (Platform.isAndroid) {
@@ -103,5 +111,21 @@ class FileLocationOpener {
       debugPrint('Dosya konumu açılamadı: $e\n$stack');
       return false;
     }
+  }
+
+  static Future<String?> _latestFileInDirectory(String dirPath) async {
+    final dir = Directory(dirPath);
+    if (!await dir.exists()) return null;
+
+    File? newest;
+    await for (final entity in dir.list()) {
+      if (entity is! File) continue;
+      if (p.basename(entity.path).startsWith('.')) continue;
+      if (newest == null ||
+          entity.lastModifiedSync().isAfter(newest.lastModifiedSync())) {
+        newest = entity;
+      }
+    }
+    return newest?.path;
   }
 }

@@ -18,6 +18,7 @@ import 'services/session_cleanup_service.dart';
 import 'services/active_session_registry.dart';
 import 'services/paired_auto_connect_service.dart';
 import 'services/recent_connection_service.dart';
+import 'services/screen_wake_service.dart';
 import 'services/transfer_history_service.dart';
 import 'screens/recent_connect_screen.dart';
 
@@ -80,6 +81,9 @@ Future<void> _startBackgroundServices() async {
     await PairedDevicesService.instance.load();
     await TransferHistoryService.instance.load();
     await DownloadDirectoryService.instance.load();
+    if (Platform.isIOS || Platform.isAndroid) {
+      await ScreenWakeService.instance.load();
+    }
     await RecentConnectionService.instance.ensureListening();
   } catch (e, stack) {
     debugPrint('Arka plan servisleri başlatılamadı: $e\n$stack');

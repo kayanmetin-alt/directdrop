@@ -53,7 +53,7 @@ class _DownloadLocationSettingsState extends State<DownloadLocationSettings> {
             SnackBar(
             content: Text(
               Platform.isAndroid
-                  ? 'Dosya yöneticisi açılamadı. Manuel gidin:\n$_displayPath'
+                  ? 'Klasör açılamadı. Dosyalar → İndirilenler → DirectDrop klasörüne gidin.'
                   : 'Dosyalar uygulaması açılamadı. Manuel gidin:\n$_displayPath',
             ),
             duration: const Duration(seconds: 6),
