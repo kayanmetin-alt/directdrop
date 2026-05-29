@@ -20,11 +20,15 @@ class FileLocationOpener {
 
     try {
       if (Platform.isIOS) {
-        final opened = await _iosFilesChannel.invokeMethod<bool>(
-          'openDownloadsFolder',
-          dirPath,
-        );
-        return opened == true;
+        try {
+          final opened = await _iosFilesChannel.invokeMethod<bool>(
+            'openDownloadsFolder',
+          );
+          return opened == true;
+        } on PlatformException catch (e) {
+          debugPrint('iOS klasör açma: ${e.code} ${e.message}');
+          return false;
+        }
       }
 
       if (Platform.isWindows) {

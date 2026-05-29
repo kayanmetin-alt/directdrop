@@ -31,7 +31,19 @@ class DownloadDirectoryService extends ChangeNotifier {
     return defaultDirectory();
   }
 
+  /// Kullanıcıya gösterilen konum (sandbox yolu değil).
   Future<String> displayPath() async {
+    if (Platform.isIOS) {
+      return 'Dosyalar → iPhone\'umda → DirectDrop → DirectDrop → Downloads';
+    }
+    if (Platform.isMacOS) {
+      final dir = await downloadsDirectory();
+      return dir.path;
+    }
+    if (Platform.isWindows) {
+      final dir = await downloadsDirectory();
+      return dir.path;
+    }
     final dir = await downloadsDirectory();
     return dir.path;
   }

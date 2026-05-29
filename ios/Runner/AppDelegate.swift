@@ -10,7 +10,11 @@ import UIKit
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
     GeneratedPluginRegistrant.register(with: self)
-    return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+    let ok = super.application(application, didFinishLaunchingWithOptions: launchOptions)
+    DispatchQueue.main.async { [weak self] in
+      self?.registerFilesChannelIfNeeded()
+    }
+    return ok
   }
 
   override func applicationDidBecomeActive(_ application: UIApplication) {
@@ -43,55 +47,73 @@ import UIKit
     channel.setMethodCallHandler { call, result in
       switch call.method {
       case "openDownloadsFolder":
-        guard let path = call.arguments as? String, !path.isEmpty else {
-          result(
-            FlutterError(
-              code: "INVALID_ARGS",
-              message: "Klasör yolu gerekli",
-              details: nil
-            )
-          )
-          return
-        }
-        Self.openInFilesApp(path: path, result: result)
+        Self.openInFilesApp(result: result)
       default:
         result(FlutterMethodNotImplemented)
       }
     }
   }
 
-  private static func openInFilesApp(path: String, result: @escaping FlutterResult) {
+  /// Dosyalar uygulamasında DirectDrop indirme klasörünü açar.
+  private static func openInFilesApp(result: @escaping FlutterResult) {
     let fm = FileManager.default
-    let resolved = (path as NSString).expandingTildeInPath
-    var isDir: ObjCBool = false
-
-    if !fm.fileExists(atPath: resolved, isDirectory: &isDir) {
-      do {
-        try fm.createDirectory(
-          atPath: resolved,
-          withIntermediateDirectories: true,
-          attributes: nil
-        )
-      } catch {
-        result(false)
-        return
-      }
-    }
-
-    let folderURL = URL(fileURLWithPath: resolved, isDirectory: true)
-    let sharedString = folderURL.absoluteString.replacingOccurrences(
-      of: "file://",
-      with: "shareddocuments://"
-    )
-
-    guard let sharedURL = URL(string: sharedString) else {
+    guard let documentsURL = fm.urls(for: .documentDirectory, in: .userDomainMask).first else {
       result(false)
       return
     }
 
+    let downloadsURL = documentsURL
+      .appendingPathComponent("DirectDrop", isDirectory: true)
+      .appendingPathComponent("Downloads", isDirectory: true)
+
+    do {
+      try fm.createDirectory(at: downloadsURL, withIntermediateDirectories: true)
+    } catch {
+      result(false)
+      return
+    }
+
+    var candidates: [URL] = []
+    for folder in [downloadsURL, documentsURL.appendingPathComponent("DirectDrop", isDirectory: true), documentsURL] {
+      if let shared = sharedDocumentsURL(for: folder) {
+        candidates.append(shared)
+      }
+    }
+    if let filesRoot = URL(string: "shareddocuments://") {
+      candidates.append(filesRoot)
+    }
+
+    tryOpenURLs(candidates, index: 0, result: result)
+  }
+
+  private static func sharedDocumentsURL(for fileURL: URL) -> URL? {
+    if var components = URLComponents(url: fileURL, resolvingAgainstBaseURL: false) {
+      components.scheme = "shareddocuments"
+      if let url = components.url { return url }
+    }
+    let path = fileURL.path
+    if path.isEmpty { return nil }
+    return URL(string: "shareddocuments://\(path)")
+  }
+
+  private static func tryOpenURLs(
+    _ urls: [URL],
+    index: Int,
+    result: @escaping FlutterResult
+  ) {
+    guard index < urls.count else {
+      result(false)
+      return
+    }
+
+    let url = urls[index]
     DispatchQueue.main.async {
-      UIApplication.shared.open(sharedURL, options: [:]) { success in
-        result(success)
+      UIApplication.shared.open(url, options: [:]) { success in
+        if success {
+          result(true)
+        } else {
+          tryOpenURLs(urls, index: index + 1, result: result)
+        }
       }
     }
   }

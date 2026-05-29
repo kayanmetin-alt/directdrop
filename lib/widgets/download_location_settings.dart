@@ -50,10 +50,9 @@ class _DownloadLocationSettingsState extends State<DownloadLocationSettings> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              'Klasör açılamadı. Dosyalar uygulamasında şu konuma bakın:\n'
-              '$_displayPath',
+              'Dosyalar uygulaması açılamadı. Manuel gidin:\n$_displayPath',
             ),
-            duration: const Duration(seconds: 5),
+            duration: const Duration(seconds: 6),
           ),
         );
       }
