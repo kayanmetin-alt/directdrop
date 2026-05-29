@@ -39,6 +39,8 @@ class TransferSessionController extends ChangeNotifier {
   bool _disposed = false;
   bool _disconnecting = false;
   bool _reconnecting = false;
+  bool _peerHasLeft = false;
+  bool _hadSuccessfulConnection = false;
   bool _pairSaved = false;
   bool _wasBackgrounded = false;
   int _guestWaitGeneration = 0;
@@ -58,6 +60,8 @@ class TransferSessionController extends ChangeNotifier {
   String? get errorMessage => _errorMessage;
   bool get isBusy => _busy;
   bool get isReconnecting => _reconnecting;
+  bool get peerHasLeft => _peerHasLeft;
+  bool get hadSuccessfulConnection => _hadSuccessfulConnection;
   bool get isDisposed => _disposed;
   bool get isConnected =>
       _connectionState == WebRtcConnectionState.connected &&
@@ -161,6 +165,7 @@ class TransferSessionController extends ChangeNotifier {
     _setBusy(true);
     try {
       await FirebaseAuthService.instance.ensureSignedIn();
+      await FirebaseAuthService.instance.requireUid();
       final normalizedCode = roomCode.trim().toUpperCase();
       final peerId = _uuid.v4();
       final persistentId = await _persistentDeviceId();
@@ -270,37 +275,47 @@ class TransferSessionController extends ChangeNotifier {
   }
 
   /// Uygulama açıkken eşleşmiş cihaza doğrudan davet gönderir (wake yerine).
-  Future<RoomSession> hostPairInvite(PairedDevice peer) async {
+  Future<RoomSession> hostPairInvite(
+    PairedDevice peer, {
+    String? roomCode,
+  }) async {
     _setBusy(true);
     try {
+      bindPeer(deviceId: peer.deviceId, displayName: peer.displayName);
       final peerId = _uuid.v4();
-      final roomCode = RoomCodeGenerator.generate();
+      final resolvedRoomCode = roomCode ?? RoomCodeGenerator.generate();
       final persistentId = await _persistentDeviceId();
 
+      await _deviceRegistry.clearPairInvitesBetween(
+        myDeviceId: persistentId,
+        peerDeviceId: peer.deviceId,
+      );
+
       await _signaling.createRoom(
-        roomCode: roomCode,
+        roomCode: resolvedRoomCode,
         hostPeerId: peerId,
         deviceName: deviceName,
         persistentDeviceId: persistentId,
       );
+      await FirebaseAuthService.instance.requireUid();
 
       _session = RoomSession(
-        roomCode: roomCode,
+        roomCode: resolvedRoomCode,
         peerId: peerId,
         role: PeerRole.host,
         deviceName: deviceName,
       );
 
-      await _beginSignaling(roomCode: roomCode, localPeerId: peerId);
+      await _beginSignaling(roomCode: resolvedRoomCode, localPeerId: peerId);
 
       await _deviceRegistry.sendPairInvite(
         targetDeviceId: peer.deviceId,
         fromDeviceId: persistentId,
         fromDeviceName: deviceName,
-        roomCode: roomCode,
+        roomCode: resolvedRoomCode,
       );
 
-      _waitForGuest(roomCode, peerId);
+      _waitForGuest(resolvedRoomCode, peerId);
       notifyListeners();
       return _session!;
     } catch (e) {
@@ -324,10 +339,24 @@ class TransferSessionController extends ChangeNotifier {
       localPeerId: localPeerId,
       onMessage: _onSignalingMessage,
     );
+    _signaling.listenForRoomClosed(
+      roomCode: roomCode,
+      onClosed: _markPeerHasLeft,
+    );
     await _signaling.replayPendingMessages(
       localPeerId: localPeerId,
       onMessage: _onSignalingMessage,
     );
+  }
+
+  void _markPeerHasLeft() {
+    if (_peerHasLeft || _disposed) return;
+    _peerHasLeft = true;
+    _deferredReconnectTimer?.cancel();
+    _connectionWatchTimer?.cancel();
+    _reconnecting = false;
+    _connectionState = WebRtcConnectionState.disconnected;
+    notifyListeners();
   }
 
   void _scheduleConnectionWatch() {
@@ -479,11 +508,13 @@ class TransferSessionController extends ChangeNotifier {
     _connectionState = state;
 
     if (state == WebRtcConnectionState.connected) {
+      _hadSuccessfulConnection = true;
       _connectionWatchTimer?.cancel();
       _deferredReconnectTimer?.cancel();
       unawaited(_persistPairIfNeeded());
-    } else if (state == WebRtcConnectionState.disconnected ||
-        state == WebRtcConnectionState.failed) {
+    } else if (!_peerHasLeft &&
+        (state == WebRtcConnectionState.disconnected ||
+            state == WebRtcConnectionState.failed)) {
       _scheduleDeferredReconnect();
     }
 
@@ -491,7 +522,7 @@ class TransferSessionController extends ChangeNotifier {
   }
 
   void _scheduleDeferredReconnect() {
-    if (_reconnecting || _wasBackgrounded) return;
+    if (_peerHasLeft || _reconnecting || _wasBackgrounded) return;
 
     _deferredReconnectTimer?.cancel();
     _deferredReconnectTimer = Timer(const Duration(seconds: 4), () {
@@ -500,7 +531,7 @@ class TransferSessionController extends ChangeNotifier {
   }
 
   Future<void> reconnectIfNeeded() async {
-    if (_disposed || !isPaired) return;
+    if (_disposed || !isPaired || _peerHasLeft) return;
     if (_reconnecting) return;
 
     final channelOpen = _webRtc?.isDataChannelOpen ?? false;
@@ -557,6 +588,11 @@ class TransferSessionController extends ChangeNotifier {
   }
 
   Future<void> _onSignalingMessage(SignalingMessage message) async {
+    if (message.type == SignalingType.peerLeft) {
+      _markPeerHasLeft();
+      return;
+    }
+
     if (message.type == SignalingType.offer &&
         _session?.role == PeerRole.guest &&
         !_reconnecting &&
@@ -647,7 +683,12 @@ class TransferSessionController extends ChangeNotifier {
     _webRtc = null;
 
     try {
-      if (_session != null) {
+      final session = _session;
+      if (session != null && session.remotePeerId != null) {
+        await _signaling.notifyPeerDeparted(
+          localPeerId: session.peerId,
+          remotePeerId: session.remotePeerId!,
+        );
         await _signaling.closeRoom();
       }
     } catch (e) {

@@ -28,14 +28,13 @@ class _HomeScreenState extends State<HomeScreen> {
     _pairedService.load();
     _pairedService.addListener(_onChanged);
     _recentConnect.addListener(_onChanged);
-    unawaited(_recentConnect.startHomeListener());
+    unawaited(_recentConnect.ensureListening());
   }
 
   @override
   void dispose() {
     _pairedService.removeListener(_onChanged);
     _recentConnect.removeListener(_onChanged);
-    _recentConnect.stopHomeListener();
     super.dispose();
   }
 
@@ -43,19 +42,18 @@ class _HomeScreenState extends State<HomeScreen> {
     if (mounted) setState(() {});
   }
 
-  void _openRecentConnect(PairedDevice peer) {
-    _recentConnect.clearIncomingInvite();
+  void _openRecentConnect(PairedDevice peer, {bool autoAcceptInvite = false}) {
+    if (!autoAcceptInvite) {
+      _recentConnect.clearIncomingInvite();
+    }
     Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) => RecentConnectScreen(peer: peer),
+        builder: (_) => RecentConnectScreen(
+          peer: peer,
+          autoAcceptInvite: autoAcceptInvite,
+        ),
       ),
     );
-  }
-
-  void _onIncomingInviteTap() {
-    final peer = _recentConnect.incomingInvitePeer;
-    if (peer == null) return;
-    _openRecentConnect(peer);
   }
 
   IconData _platformIcon(String platform) {
@@ -106,27 +104,26 @@ class _HomeScreenState extends State<HomeScreen> {
                 Material(
                   color: theme.colorScheme.primaryContainer,
                   borderRadius: BorderRadius.circular(12),
-                  child: InkWell(
-                    onTap: _onIncomingInviteTap,
-                    borderRadius: BorderRadius.circular(12),
-                    child: Padding(
-                      padding: const EdgeInsets.all(12),
-                      child: Row(
-                        children: [
-                          Icon(
-                            Icons.notifications_active,
+                  child: Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Row(
+                      children: [
+                        SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
                             color: theme.colorScheme.primary,
                           ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Text(
-                              '${incoming.displayName} bağlanmak istiyor — dokunun',
-                              style: theme.textTheme.titleSmall,
-                            ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Text(
+                            '${incoming.displayName} bağlanıyor…',
+                            style: theme.textTheme.titleSmall,
                           ),
-                          const Icon(Icons.chevron_right),
-                        ],
-                      ),
+                        ),
+                      ],
                     ),
                   ),
                 ),
@@ -164,8 +161,8 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
               const SizedBox(height: 4),
               Text(
-                'Daha önce bağlandığınız cihazlar. Dokunarak yeniden bağlanın '
-                '(QR gerekmez; her iki tarafta uygulama açık olmalı).',
+                'Yalnızca bir cihazdan eşleşmeye dokunun. Diğer tarafta uygulama '
+                'açık kalsın — oda orada otomatik açılır (QR gerekmez).',
                 style: theme.textTheme.bodySmall?.copyWith(
                   color: theme.colorScheme.onSurfaceVariant,
                 ),

@@ -8,8 +8,10 @@ class AppVersionService {
 
   PackageInfo? _info;
 
-  Future<void> load() async {
-    _info ??= await PackageInfo.fromPlatform();
+  Future<void> load({bool forceReload = false}) async {
+    if (forceReload || _info == null) {
+      _info = await PackageInfo.fromPlatform();
+    }
   }
 
   String get version => _info?.version ?? '—';

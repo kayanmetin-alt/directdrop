@@ -166,7 +166,7 @@ Uygulama açılışında **anonim Firebase Auth** oturumu açılır. Realtime Da
 |------|-----------------|----------------|
 | `devices/{id}` (online, isim…) | Giriş yapmış her cihaz | Yalnızca `ownerUid` sahibi |
 | `devices/{id}/wakeRequests` | Hedef cihaz sahibi | Gönderen (`fromAuthUid`) veya hedef (silme) |
-| `devices/{id}/incomingPair` | Hedef cihaz sahibi | Davet gönderen (`fromAuthUid`) |
+| `pairInvites/{targetId}/{fromId}` | Giriş yapmış kullanıcılar | Davet gönderen (`fromAuthUid`) |
 | `rooms/{kod}` | Giriş yapmış cihazlar | Oda katılımcıları (`allowedUids`) |
 
 **Kurulum (bir kez):**

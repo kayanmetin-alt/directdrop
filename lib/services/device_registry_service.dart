@@ -20,6 +20,7 @@ class DeviceRegistryService {
   bool _connectionMonitorStarted = false;
 
   DatabaseReference get _devices => _database.ref('devices');
+  DatabaseReference get _pairInvites => _database.ref('pairInvites');
 
   Future<void> registerCurrentDevice({String? fcmToken}) async {
     try {
@@ -171,6 +172,19 @@ class DeviceRegistryService {
     });
   }
 
+  /// Eski / çift tıklama davetlerini temizler.
+  Future<void> clearPairInvitesBetween({
+    required String myDeviceId,
+    required String peerDeviceId,
+  }) async {
+    try {
+      await _pairInvites.child(peerDeviceId).child(myDeviceId).remove();
+      await _pairInvites.child(myDeviceId).child(peerDeviceId).remove();
+    } catch (e) {
+      debugPrint('Davet temizliği atlandı: $e');
+    }
+  }
+
   Future<void> sendPairInvite({
     required String targetDeviceId,
     required String fromDeviceId,
@@ -178,18 +192,19 @@ class DeviceRegistryService {
     required String roomCode,
   }) async {
     final fromAuthUid = await FirebaseAuthService.instance.requireUid();
-    final ref = _devices
-        .child(targetDeviceId)
-        .child('incomingPair')
-        .child(fromDeviceId);
-    // Eski daveti sil; aksi halde Firebase onChildAdded tekrar tetiklenmez.
-    await ref.remove();
+    final ref = _pairInvites.child(targetDeviceId).child(fromDeviceId);
+    try {
+      await ref.remove();
+    } catch (e) {
+      debugPrint('Eski davet silinemedi (devam): $e');
+    }
     await ref.set({
       'roomCode': roomCode,
       'fromDeviceId': fromDeviceId,
       'fromDeviceName': fromDeviceName,
       'fromAuthUid': fromAuthUid,
       'createdAt': ServerValue.timestamp,
+      'clientCreatedAt': DateTime.now().millisecondsSinceEpoch,
     });
   }
 
@@ -197,15 +212,19 @@ class DeviceRegistryService {
     required String targetDeviceId,
     required String fromDeviceId,
   }) async {
-    await _devices
-        .child(targetDeviceId)
-        .child('incomingPair')
-        .child(fromDeviceId)
-        .remove();
+    try {
+      await _pairInvites.child(targetDeviceId).child(fromDeviceId).remove();
+    } catch (e) {
+      // Karşı tarafın gönderdiği daveti silmek için fromAuthUid eşleşmeyebilir.
+      debugPrint('Davet silinemedi (devam): $e');
+    }
   }
 
-  DatabaseReference incomingPairRef(String deviceId) =>
-      _devices.child(deviceId).child('incomingPair');
+  DatabaseReference pairInvitesRef(String targetDeviceId) =>
+      _pairInvites.child(targetDeviceId);
+
+  /// Eski ad; davetler artık `pairInvites/{deviceId}` altında.
+  DatabaseReference incomingPairRef(String deviceId) => pairInvitesRef(deviceId);
 
   Future<String?> getFcmToken(String deviceId) async {
     final snapshot = await _devices.child(deviceId).child('fcmToken').get();

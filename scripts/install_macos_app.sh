@@ -6,11 +6,12 @@ set -e
 
 cd "$(dirname "$0")/.."
 
-echo "==> Bağımlılıklar"
+echo "==> Bağımlılıklar (Mac sürümü)"
 flutter pub get
+flutter build macos --config-only
 
-echo "==> macOS CocoaPods"
-cd macos && pod install && cd ..
+echo "==> macOS CocoaPods (ilk seferde 5–15 dk sürebilir, bekleyin)"
+cd macos && pod install --verbose && cd ..
 
 echo "==> Release build"
 if ! flutter build macos --release; then

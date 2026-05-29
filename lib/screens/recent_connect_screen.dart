@@ -7,14 +7,21 @@ import '../models/paired_device.dart';
 import '../providers/transfer_session_controller.dart';
 import '../services/active_session_registry.dart';
 import '../services/recent_connection_service.dart';
+import '../utils/user_facing_error.dart';
 import 'host_screen.dart';
 import 'join_screen.dart';
 import 'transfer_screen.dart';
 
 class RecentConnectScreen extends StatefulWidget {
-  const RecentConnectScreen({super.key, required this.peer});
+  const RecentConnectScreen({
+    super.key,
+    required this.peer,
+    this.autoAcceptInvite = false,
+  });
 
   final PairedDevice peer;
+  /// Karşı taraftan gelen davetle otomatik odaya katıl.
+  final bool autoAcceptInvite;
 
   @override
   State<RecentConnectScreen> createState() => _RecentConnectScreenState();
@@ -23,7 +30,9 @@ class RecentConnectScreen extends StatefulWidget {
 class _RecentConnectScreenState extends State<RecentConnectScreen> {
   TransferSessionController? _controller;
   String? _error;
+  String? _statusMessage;
   bool _ownsController = false;
+  bool _wasEverConnected = false;
 
   @override
   void initState() {
@@ -34,12 +43,29 @@ class _RecentConnectScreenState extends State<RecentConnectScreen> {
   Future<void> _connect() async {
     setState(() {
       _error = null;
+      _statusMessage = widget.autoAcceptInvite
+          ? '${widget.peer.displayName} sizi bekliyor…'
+          : 'Bağlantı başlatılıyor…';
       _controller = null;
     });
 
     try {
-      final controller =
-          await RecentConnectionService.instance.connectToPeer(widget.peer);
+      final service = RecentConnectionService.instance;
+      final controller = widget.autoAcceptInvite
+          ? await service.acceptInviteFromPeer(
+              widget.peer,
+              onProgress: (message) {
+                if (!mounted) return;
+                setState(() => _statusMessage = message);
+              },
+            )
+          : await service.connectToPeer(
+              widget.peer,
+              onProgress: (message) {
+                if (!mounted) return;
+                setState(() => _statusMessage = message);
+              },
+            );
       if (!mounted) {
         controller.disconnect();
         controller.dispose();
@@ -48,16 +74,20 @@ class _RecentConnectScreenState extends State<RecentConnectScreen> {
       _ownsController = true;
       _controller = controller;
       ActiveSessionRegistry.instance.register(controller);
-      RecentConnectionService.instance.clearIncomingInvite();
-      setState(() {});
+      service.clearIncomingInvite();
+      setState(() => _statusMessage = null);
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error = e.toString());
+      setState(() {
+        _error = userFacingMessage(e);
+        _statusMessage = null;
+      });
     }
   }
 
   @override
   void dispose() {
+    RecentConnectionService.instance.clearAutoConnectActive();
     if (_controller != null) {
       ActiveSessionRegistry.instance.unregister(_controller!);
       if (_ownsController && !_controller!.isDisposed) {
@@ -73,50 +103,53 @@ class _RecentConnectScreenState extends State<RecentConnectScreen> {
     if (_error != null) {
       return Scaffold(
         appBar: AppBar(title: Text(widget.peer.displayName)),
-        body: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Icon(
-                Icons.link_off,
-                size: 48,
-                color: Theme.of(context).colorScheme.error,
-              ),
-              const SizedBox(height: 16),
-              Text(
-                _error!,
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 24),
-              FilledButton(
-                onPressed: _connect,
-                child: const Text('Tekrar dene'),
-              ),
-              const SizedBox(height: 12),
-              OutlinedButton.icon(
-                onPressed: () {
-                  Navigator.of(context).push(
-                    MaterialPageRoute<void>(
-                      builder: (_) => const HostScreen(),
-                    ),
-                  );
-                },
-                icon: const Icon(Icons.upload_file),
-                label: const Text('Yeni oda (QR)'),
-              ),
-              OutlinedButton.icon(
-                onPressed: () {
-                  Navigator.of(context).push(
-                    MaterialPageRoute<void>(
-                      builder: (_) => const JoinScreen(),
-                    ),
-                  );
-                },
-                icon: const Icon(Icons.download),
-                label: const Text('Koda katıl (QR)'),
-              ),
-            ],
+        body: SafeArea(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Icon(
+                  Icons.link_off,
+                  size: 48,
+                  color: Theme.of(context).colorScheme.error,
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  _error!,
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.bodyLarge,
+                ),
+                const SizedBox(height: 24),
+                FilledButton(
+                  onPressed: _connect,
+                  child: const Text('Tekrar dene'),
+                ),
+                const SizedBox(height: 12),
+                OutlinedButton.icon(
+                  onPressed: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => const HostScreen(),
+                      ),
+                    );
+                  },
+                  icon: const Icon(Icons.upload_file),
+                  label: const Text('Yeni oda (QR)'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => const JoinScreen(),
+                      ),
+                    );
+                  },
+                  icon: const Icon(Icons.download),
+                  label: const Text('Koda katıl (QR)'),
+                ),
+              ],
+            ),
           ),
         ),
       );
@@ -126,27 +159,32 @@ class _RecentConnectScreenState extends State<RecentConnectScreen> {
     if (controller == null) {
       return Scaffold(
         appBar: AppBar(title: Text(widget.peer.displayName)),
-        body: Center(
-          child: Padding(
-            padding: const EdgeInsets.all(24),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const CircularProgressIndicator(),
-                const SizedBox(height: 24),
-                Text(
-                  '${widget.peer.displayName} ile bağlanılıyor…',
-                  textAlign: TextAlign.center,
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  'Karşı cihazda uygulama açıksa otomatik eşleşir.\n'
-                  'Olmazsa diğer taraftan da listeden bağlanmayı deneyin.',
-                  textAlign: TextAlign.center,
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-              ],
+        body: SafeArea(
+          child: Center(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const CircularProgressIndicator(),
+                  const SizedBox(height: 24),
+                  Text(
+                    widget.autoAcceptInvite
+                        ? '${widget.peer.displayName} ile bağlanılıyor…'
+                        : '${widget.peer.displayName} ile bağlanılıyor…',
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  if (_statusMessage != null) ...[
+                    const SizedBox(height: 12),
+                    Text(
+                      _statusMessage!,
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.bodyMedium,
+                    ),
+                  ],
+                ],
+              ),
             ),
           ),
         ),
@@ -157,6 +195,10 @@ class _RecentConnectScreenState extends State<RecentConnectScreen> {
       listenable: controller,
       builder: (context, _) {
         if (controller.isConnected) {
+          _wasEverConnected = true;
+        }
+
+        if (controller.isConnected || _wasEverConnected) {
           return ChangeNotifierProvider.value(
             value: controller,
             child: TransferScreen(
@@ -169,7 +211,25 @@ class _RecentConnectScreenState extends State<RecentConnectScreen> {
 
         return Scaffold(
           appBar: AppBar(title: Text(widget.peer.displayName)),
-          body: const Center(child: CircularProgressIndicator()),
+          body: SafeArea(
+            child: Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const CircularProgressIndicator(),
+                    const SizedBox(height: 24),
+                    Text(
+                      '${widget.peer.displayName} ile bağlanılıyor…',
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
         );
       },
     );

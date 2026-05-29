@@ -238,6 +238,41 @@ class _TransferScreenState extends State<TransferScreen>
         .toList();
   }
 
+  Widget _buildPeerDepartedBody(BuildContext context, String peerLabel) {
+    final theme = Theme.of(context);
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const CircularProgressIndicator(),
+            const SizedBox(height: 28),
+            Text(
+              '$peerLabel odadan ayrıldı',
+              textAlign: TextAlign.center,
+              style: theme.textTheme.titleMedium,
+            ),
+            const SizedBox(height: 10),
+            Text(
+              'Bağlantı sonlandı. Ana sayfaya dönebilirsiniz.',
+              textAlign: TextAlign.center,
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(height: 28),
+            FilledButton.icon(
+              onPressed: _disconnect,
+              icon: const Icon(Icons.home_outlined),
+              label: const Text('Ana sayfaya dön'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildActiveTransferItem(TransferFileItem item) {
     if (item.status == TransferStatus.awaitingApproval &&
         item.direction == TransferDirection.receiving) {
@@ -263,6 +298,23 @@ class _TransferScreenState extends State<TransferScreen>
         final history = _historyEntries();
         final peerLabel =
             widget.peerDisplayName ?? _controller.peerDisplayName ?? 'Cihaz';
+
+        if (_controller.peerHasLeft) {
+          return PopScope(
+            canPop: false,
+            onPopInvokedWithResult: (didPop, result) async {
+              if (didPop) return;
+              await _disconnect();
+            },
+            child: Scaffold(
+              appBar: AppBar(
+                title: Text(peerLabel),
+                automaticallyImplyLeading: false,
+              ),
+              body: _buildPeerDepartedBody(context, peerLabel),
+            ),
+          );
+        }
 
         return PopScope(
           canPop: false,

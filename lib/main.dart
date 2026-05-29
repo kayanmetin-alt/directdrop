@@ -16,7 +16,11 @@ import 'services/notification_service.dart';
 import 'services/paired_devices_service.dart';
 import 'services/session_cleanup_service.dart';
 import 'services/active_session_registry.dart';
+import 'services/recent_connection_service.dart';
 import 'services/transfer_history_service.dart';
+import 'screens/recent_connect_screen.dart';
+
+final GlobalKey<NavigatorState> rootNavigatorKey = GlobalKey<NavigatorState>();
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -58,6 +62,7 @@ Future<void> main() async {
       }
       unawaited(AppVersionService.instance.load());
       unawaited(_startBackgroundServices());
+      _wireAutoReconnect();
     }
   } catch (e, stack) {
     startupError = 'Uygulama başlatılamadı: $e';
@@ -72,9 +77,25 @@ Future<void> _startBackgroundServices() async {
     await PairedDevicesService.instance.load();
     await TransferHistoryService.instance.load();
     await DownloadDirectoryService.instance.load();
+    await RecentConnectionService.instance.ensureListening();
   } catch (e, stack) {
     debugPrint('Arka plan servisleri başlatılamadı: $e\n$stack');
   }
+}
+
+void _wireAutoReconnect() {
+  RecentConnectionService.instance.openAutoConnectScreen = (peer) {
+    final nav = rootNavigatorKey.currentState;
+    if (nav == null) return;
+    nav.push(
+      MaterialPageRoute<void>(
+        builder: (_) => RecentConnectScreen(
+          peer: peer,
+          autoAcceptInvite: true,
+        ),
+      ),
+    );
+  };
 }
 
 class DirectDropApp extends StatefulWidget {
@@ -107,7 +128,9 @@ class _DirectDropAppState extends State<DirectDropApp> with WidgetsBindingObserv
           debugPrint('Auth yenileme: $e');
         }),
       );
+      unawaited(RecentConnectionService.instance.ensureListening());
     } else if (state == AppLifecycleState.detached) {
+      RecentConnectionService.instance.stopListening();
       unawaited(ActiveSessionRegistry.instance.disconnectActive());
     }
   }
@@ -116,6 +139,7 @@ class _DirectDropAppState extends State<DirectDropApp> with WidgetsBindingObserv
   Widget build(BuildContext context) {
     final startupError = widget.startupError;
     return MaterialApp(
+      navigatorKey: rootNavigatorKey,
       title: 'DirectDrop',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(

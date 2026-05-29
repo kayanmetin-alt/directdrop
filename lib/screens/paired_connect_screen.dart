@@ -30,6 +30,7 @@ class _PairedConnectScreenState extends State<PairedConnectScreen> {
   TransferSessionController? _controller;
   String? _error;
   bool _ownsController = false;
+  bool _wasEverConnected = false;
 
   @override
   void initState() {
@@ -144,6 +145,10 @@ class _PairedConnectScreenState extends State<PairedConnectScreen> {
       listenable: controller,
       builder: (context, _) {
         if (controller.isConnected) {
+          _wasEverConnected = true;
+        }
+
+        if (controller.isConnected || _wasEverConnected) {
           return ChangeNotifierProvider.value(
             value: controller,
             child: TransferScreen(

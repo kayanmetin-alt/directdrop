@@ -15,6 +15,7 @@ class FirebaseSignalingService {
 
   final FirebaseDatabase _database;
   StreamSubscription<DatabaseEvent>? _messagesSubscription;
+  StreamSubscription<DatabaseEvent>? _roomStatusSubscription;
   DatabaseReference? _roomRef;
 
   DatabaseReference get _rooms => _database.ref('rooms');
@@ -50,6 +51,26 @@ class FirebaseSignalingService {
     }
   }
 
+  /// Davet ile katılmadan önce odanın hâlâ açık olduğunu doğrular.
+  Future<void> assertRoomJoinable(String roomCode) async {
+    final normalized = roomCode.trim().toUpperCase();
+    final snapshot = await _rooms.child(normalized).get();
+    if (!snapshot.exists) {
+      throw StateError('Oda bulunamadı veya süresi doldu. Tekrar deneyin.');
+    }
+    final data = Map<String, dynamic>.from(snapshot.value as Map);
+    final status = data['status'] as String?;
+    if (status == 'closed') {
+      throw StateError('Bu oda kapatılmış. Yeniden eşleşin.');
+    }
+    if (status != 'waiting') {
+      throw StateError(
+        'Oda artık müsait değil (durum: $status). '
+        'Sadece bir cihazdan bağlanmayı deneyin.',
+      );
+    }
+  }
+
   Future<void> joinRoom({
     required String roomCode,
     required String guestPeerId,
@@ -57,7 +78,10 @@ class FirebaseSignalingService {
     required String persistentDeviceId,
   }) async {
     final guestAuthUid = await FirebaseAuthService.instance.requireUid();
-    _roomRef = _rooms.child(roomCode);
+    final normalizedCode = roomCode.trim().toUpperCase();
+    await assertRoomJoinable(normalizedCode);
+
+    _roomRef = _rooms.child(normalizedCode);
     final snapshot = await _roomRef!.get();
     if (!snapshot.exists) {
       throw StateError('Oda bulunamadı. Kodu kontrol edin.');
@@ -141,11 +165,20 @@ class FirebaseSignalingService {
         .push()
         .key!;
 
-    await _roomRef!
-        .child('signaling')
-        .child(message.toPeerId)
-        .child(messageId)
-        .set(message.toJson());
+    try {
+      await _roomRef!
+          .child('signaling')
+          .child(message.toPeerId)
+          .child(messageId)
+          .set(message.toJson());
+    } on FirebaseException catch (e) {
+      if (e.code == 'permission-denied') {
+        throw StateError(
+          'Sinyal gönderilemedi (oda izni). Uygulamayı kapatıp açın veya QR ile yeniden eşleşin.',
+        );
+      }
+      rethrow;
+    }
   }
 
   void listenForMessages({
@@ -201,6 +234,35 @@ class FirebaseSignalingService {
     }
   }
 
+  Future<void> notifyPeerDeparted({
+    required String localPeerId,
+    required String remotePeerId,
+  }) async {
+    if (_roomRef == null) return;
+    try {
+      await sendMessage(
+        SignalingMessage(
+          type: SignalingType.peerLeft,
+          fromPeerId: localPeerId,
+          toPeerId: remotePeerId,
+        ),
+      );
+    } catch (e) {
+      debugPrint('peerLeft gönderilemedi: $e');
+    }
+  }
+
+  void listenForRoomClosed({
+    required String roomCode,
+    required void Function() onClosed,
+  }) {
+    _roomStatusSubscription?.cancel();
+    _roomStatusSubscription =
+        _rooms.child(roomCode).child('status').onValue.listen((event) {
+      if (event.snapshot.value == 'closed') onClosed();
+    });
+  }
+
   Future<void> closeRoom() async {
     await _roomRef?.update({'status': 'closed'});
     await dispose();
@@ -209,6 +271,8 @@ class FirebaseSignalingService {
   Future<void> dispose() async {
     await _messagesSubscription?.cancel();
     _messagesSubscription = null;
+    await _roomStatusSubscription?.cancel();
+    _roomStatusSubscription = null;
     _roomRef = null;
   }
 }
