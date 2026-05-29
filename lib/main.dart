@@ -4,6 +4,7 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import 'firebase_options.dart';
@@ -16,31 +17,47 @@ import 'services/transfer_history_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await Firebase.initializeApp(
-    options: DefaultFirebaseOptions.currentPlatform,
-  );
-  try {
-    FirebaseDatabase.instance.setPersistenceEnabled(false);
-  } catch (e) {
-    debugPrint('Firebase persistence kapatılamadı: $e');
-  }
-  if (Platform.isIOS || Platform.isAndroid) {
-    FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
-  }
 
-  await NotificationService.instance.initialize();
+  FlutterError.onError = (details) {
+    FlutterError.presentError(details);
+    debugPrint('FlutterError: ${details.exceptionAsString()}');
+  };
 
   String? startupError;
-  try {
-    await FirebaseAuthService.instance.ensureSignedIn();
-  } catch (e, stack) {
-    startupError = e.toString();
-    debugPrint('Firebase Auth başlatılamadı: $e\n$stack');
-  }
 
-  if (startupError == null) {
-    unawaited(AppVersionService.instance.load());
-    unawaited(_startBackgroundServices());
+  try {
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
+    try {
+      FirebaseDatabase.instance.setPersistenceEnabled(false);
+    } catch (e) {
+      debugPrint('Firebase persistence kapatılamadı: $e');
+    }
+
+    if (Platform.isIOS || Platform.isAndroid) {
+      FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
+    }
+
+    try {
+      await FirebaseAuthService.instance.ensureSignedIn();
+    } catch (e, stack) {
+      startupError = e.toString();
+      debugPrint('Firebase Auth başlatılamadı: $e\n$stack');
+    }
+
+    if (startupError == null) {
+      try {
+        await NotificationService.instance.initialize();
+      } catch (e, stack) {
+        debugPrint('Bildirim servisi başlatılamadı: $e\n$stack');
+      }
+      unawaited(AppVersionService.instance.load());
+      unawaited(_startBackgroundServices());
+    }
+  } catch (e, stack) {
+    startupError = 'Uygulama başlatılamadı: $e';
+    debugPrint('main başlatma hatası: $e\n$stack');
   }
 
   runApp(DirectDropApp(startupError: startupError));
@@ -80,7 +97,11 @@ class _DirectDropAppState extends State<DirectDropApp> with WidgetsBindingObserv
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
-      unawaited(FirebaseAuthService.instance.ensureSignedIn());
+      unawaited(
+        FirebaseAuthService.instance.ensureSignedIn().catchError((Object e) {
+          debugPrint('Auth yenileme: $e');
+        }),
+      );
     }
   }
 
@@ -129,6 +150,8 @@ class _StartupErrorScreen extends StatelessWidget {
               const SizedBox(height: 8),
               const Text('• Firebase Console → Authentication → Anonymous → Enable'),
               const Text('• Uygulamayı kapatıp yeniden açın'),
+              if (Platform.isIOS)
+                const Text('• Xcode → Signing & Capabilities → Team seçili olsun'),
               if (Platform.isMacOS)
                 const Text(
                   '• Keychain Access uygulamasında "DirectDrop" veya '

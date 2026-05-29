@@ -1,7 +1,11 @@
+import 'dart:async';
 import 'dart:io';
 
+import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
+
+import '../firebase_options.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
 import '../models/paired_device.dart';
@@ -57,7 +61,6 @@ class NotificationService {
 
   Future<void> _initFirebaseMessaging() async {
     if (Platform.isMacOS || Platform.isWindows) {
-      // Masaüstünde push yapılandırılmadı; RTDB dinleyicisi yeterli.
       return;
     }
 
@@ -93,9 +96,14 @@ class NotificationService {
         }
       }
 
-      await _refreshFcmToken();
+      // Push token kaydı opsiyonel; başarısız olursa uygulama çökmemeli.
+      unawaited(_refreshFcmToken());
       FirebaseMessaging.instance.onTokenRefresh.listen((token) async {
-        await _registry.updateFcmToken(token);
+        try {
+          await _registry.updateFcmToken(token);
+        } catch (e) {
+          debugPrint('FCM token güncellenemedi: $e');
+        }
       });
     } catch (e) {
       debugPrint('FCM başlatılamadı (uygulama devam ediyor): $e');
@@ -109,7 +117,7 @@ class NotificationService {
         await _registry.updateFcmToken(token);
       }
     } catch (e) {
-      debugPrint('FCM token alınamadı: $e');
+      debugPrint('FCM token alınamadı (önemsiz): $e');
     }
   }
 
@@ -182,5 +190,12 @@ class NotificationService {
 
 @pragma('vm:entry-point')
 Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
-  debugPrint('Arka plan FCM: ${message.messageId}');
+  try {
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
+    debugPrint('Arka plan FCM: ${message.messageId}');
+  } catch (e) {
+    debugPrint('Arka plan FCM handler: $e');
+  }
 }
