@@ -12,7 +12,7 @@ import '../services/active_session_registry.dart';
 import '../widgets/active_transfer_tile.dart';
 import '../widgets/desktop_file_drop_overlay.dart';
 import '../widgets/download_location_settings.dart';
-import '../widgets/screen_wake_settings.dart';
+import '../widgets/transfer_room_settings_sheet.dart';
 import '../widgets/transfer_history_tile.dart';
 import '../widgets/transfer_progress_tile.dart';
 import '../widgets/app_version_label.dart';
@@ -333,6 +333,9 @@ class _TransferScreenState extends State<TransferScreen>
               ],
             ),
             actions: [
+              TransferRoomSettingsIcon(
+                onPressed: () => TransferRoomSettingsSheet.show(context),
+              ),
               if (history.isNotEmpty)
                 IconButton(
                   onPressed: _confirmClearHistory,
@@ -446,8 +449,6 @@ class _TransferScreenState extends State<TransferScreen>
                   ),
                 ],
                 const SizedBox(height: 12),
-                const ScreenWakeSettings(),
-                const SizedBox(height: 8),
                 const DownloadLocationSettings(),
                 const SizedBox(height: 16),
                 Row(
