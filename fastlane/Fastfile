@@ -1,5 +1,28 @@
 default_platform(:android)
 
+# App Store Connect sometimes returns "No data" while Fastlane tries to
+# inspect first-version review attachments that do not exist yet. That should
+# not block metadata/screenshot uploads, so skip only this optional cleanup.
+begin
+  require "deliver/upload_metadata"
+
+  module Deliver
+    class UploadMetadata
+      unless method_defined?(:directdrop_original_review_attachment_file)
+        alias_method :directdrop_original_review_attachment_file, :review_attachment_file
+      end
+
+      def review_attachment_file(version)
+        directdrop_original_review_attachment_file(version)
+      rescue => error
+        UI.important("Review attachment kontrolü atlandı: #{error.message}")
+      end
+    end
+  end
+rescue LoadError
+  UI.important("Deliver metadata patch yüklenemedi; Fastlane varsayılan akışla devam edecek.")
+end
+
 platform :android do
   desc "Play Store internal track'e AAB yükle"
   lane :deploy do
