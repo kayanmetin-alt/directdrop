@@ -45,15 +45,6 @@ class WakeListenerService {
     await start();
   }
 
-  Future<void> processPendingRequests() async {
-    final deviceId = await DeviceIdentityService.instance.getDeviceId();
-    final ref = FirebaseDatabase.instance
-        .ref('devices')
-        .child(deviceId)
-        .child('wakeRequests');
-    await _processPending(ref);
-  }
-
   Future<void> _processPending(DatabaseReference ref) async {
     final snapshot = await ref.get();
     if (!snapshot.exists || snapshot.value is! Map) return;

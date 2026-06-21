@@ -1,5 +1,7 @@
 import Flutter
 import UIKit
+import UserNotifications
+import FirebaseMessaging
 
 @main
 @objc class AppDelegate: FlutterAppDelegate {
@@ -9,12 +11,34 @@ import UIKit
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
+    if #available(iOS 10.0, *) {
+      UNUserNotificationCenter.current().delegate = self
+    }
+
     GeneratedPluginRegistrant.register(with: self)
+    application.registerForRemoteNotifications()
+
     let ok = super.application(application, didFinishLaunchingWithOptions: launchOptions)
     DispatchQueue.main.async { [weak self] in
       self?.registerFilesChannelIfNeeded()
     }
     return ok
+  }
+
+  override func application(
+    _ application: UIApplication,
+    didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data
+  ) {
+    Messaging.messaging().apnsToken = deviceToken
+    super.application(application, didRegisterForRemoteNotificationsWithDeviceToken: deviceToken)
+  }
+
+  override func application(
+    _ application: UIApplication,
+    didFailToRegisterForRemoteNotificationsWithError error: Error
+  ) {
+    NSLog("DirectDrop APNs kaydı başarısız: \(error.localizedDescription)")
+    super.application(application, didFailToRegisterForRemoteNotificationsWithError: error)
   }
 
   override func applicationDidBecomeActive(_ application: UIApplication) {

@@ -12,6 +12,8 @@ class FirebaseAuthService {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   static const _signInTimeout = Duration(seconds: 12);
 
+  Future<void>? _signInInFlight;
+
   String? get uid => _auth.currentUser?.uid;
 
   Future<String> requireUid() async {
@@ -28,9 +30,14 @@ class FirebaseAuthService {
     return user.uid;
   }
 
-  Future<void> ensureSignedIn() async {
-    if (_auth.currentUser != null) return;
+  Future<void> ensureSignedIn() {
+    if (_auth.currentUser != null) return Future<void>.value();
+    // Eşzamanlı çağrıları (ör. açılış bootstrap + HomeScreen) tek isteğe indir.
+    return _signInInFlight ??=
+        _signInAnonymously().whenComplete(() => _signInInFlight = null);
+  }
 
+  Future<void> _signInAnonymously() async {
     try {
       await _auth.signInAnonymously().timeout(_signInTimeout);
       debugPrint('Firebase anonim oturum: ${_auth.currentUser?.uid}');

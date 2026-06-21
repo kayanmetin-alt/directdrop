@@ -4,18 +4,22 @@ class PairedDevice {
     required this.displayName,
     required this.platform,
     required this.lastConnectedAt,
+    this.inviteCode,
   });
 
   final String deviceId;
   final String displayName;
   final String platform;
   final DateTime lastConnectedAt;
+  /// Kalıcı QR kodu — yeniden kurulumda güncel deviceId çözümlemek için.
+  final String? inviteCode;
 
   Map<String, dynamic> toJson() => {
         'deviceId': deviceId,
         'displayName': displayName,
         'platform': platform,
         'lastConnectedAt': lastConnectedAt.toIso8601String(),
+        if (inviteCode != null) 'inviteCode': inviteCode,
       };
 
   factory PairedDevice.fromJson(Map<String, dynamic> json) {
@@ -25,6 +29,7 @@ class PairedDevice {
       platform: json['platform'] as String? ?? 'unknown',
       lastConnectedAt: DateTime.tryParse(json['lastConnectedAt'] as String? ?? '') ??
           DateTime.fromMillisecondsSinceEpoch(0),
+      inviteCode: json['inviteCode'] as String?,
     );
   }
 
@@ -32,12 +37,14 @@ class PairedDevice {
     String? deviceId,
     String? displayName,
     DateTime? lastConnectedAt,
+    String? inviteCode,
   }) {
     return PairedDevice(
       deviceId: deviceId ?? this.deviceId,
       displayName: displayName ?? this.displayName,
       platform: platform,
       lastConnectedAt: lastConnectedAt ?? this.lastConnectedAt,
+      inviteCode: inviteCode ?? this.inviteCode,
     );
   }
 }

@@ -38,16 +38,22 @@ class SessionCleanupService {
     final graceful = prefs.getBool(_gracefulShutdownKey) ?? true;
     _lastLaunchWasUnclean = !graceful;
 
+    // Bu açılışı hemen "çalışıyor" olarak işaretle; temizlik yavaş olsa bile
+    // işaret kaybolmasın (sonraki çökme yine tespit edilsin).
+    await prefs.setBool(_gracefulShutdownKey, false);
+
     if (_lastLaunchWasUnclean) {
       debugPrint(
-        'Önceki oturum düzgün kapanmadı — yeniden bağlanma davetleri sıfırlanıyor.',
+        'Önceki oturum düzgün kapanmadı — her şey sıfırlanıyor.',
       );
-      await _clearReconnectArtifacts();
-      RecentConnectionService.instance.clearIncomingInvite();
+      // Önce bayat otomatik bağlanmayı bastır, böylece temizlik sürerken
+      // yarım kalan oturuma geri dönülmez.
       RecentConnectionService.instance.suppressAutoConnectThisLaunch = true;
+      RecentConnectionService.instance.clearIncomingInvite();
+      RecentConnectionService.instance.clearIncomingReconnect();
+      RecentConnectionService.instance.clearAutoConnectActive();
+      await _clearReconnectArtifacts();
     }
-
-    await prefs.setBool(_gracefulShutdownKey, false);
   }
 
   Future<void> markGracefulShutdown() async {
@@ -60,22 +66,24 @@ class SessionCleanupService {
   }
 
   Future<void> _clearReconnectArtifacts() async {
+    const opTimeout = Duration(seconds: 4);
     try {
       await FirebaseAuthService.instance.ensureSignedIn();
       final myId = await DeviceIdentityService.instance.getDeviceId();
       await PairedDevicesService.instance.load();
 
-      await _registry.clearAllInvitesForDevice(myId);
+      await _registry.clearAllInvitesForDevice(myId).timeout(opTimeout);
 
       for (final peer in PairedDevicesService.instance.devices) {
-        await _coordinator.clearSession(
-          myDeviceId: myId,
-          peerDeviceId: peer.deviceId,
-        );
-        await _registry.clearPairInvitesBetween(
-          myDeviceId: myId,
-          peerDeviceId: peer.deviceId,
-        );
+        await _coordinator
+            .clearSession(myDeviceId: myId, peerDeviceId: peer.deviceId)
+            .timeout(opTimeout, onTimeout: () {});
+        await _registry
+            .clearPairInvitesBetween(
+              myDeviceId: myId,
+              peerDeviceId: peer.deviceId,
+            )
+            .timeout(opTimeout, onTimeout: () {});
       }
     } catch (e, stack) {
       debugPrint('Çökme sonrası davet temizliği: $e\n$stack');

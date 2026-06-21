@@ -73,7 +73,7 @@ class SessionExitHelper {
 
     if (snackMessage != null) {
       final messengerContext = rootNavigatorKey.currentContext;
-      if (messengerContext != null) {
+      if (messengerContext != null && messengerContext.mounted) {
         ScaffoldMessenger.of(messengerContext).showSnackBar(
           SnackBar(content: Text(snackMessage)),
         );

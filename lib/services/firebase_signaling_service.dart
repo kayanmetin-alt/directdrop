@@ -217,6 +217,19 @@ class FirebaseSignalingService {
     return snapshot.value as String?;
   }
 
+  /// Misafir odaya katılınca anında haber verir (polling yerine).
+  StreamSubscription<DatabaseEvent> watchGuestPeerId(
+    String roomCode,
+    void Function(String guestPeerId) onGuest,
+  ) {
+    return _rooms.child(roomCode).child('guestPeerId').onValue.listen((event) {
+      final value = event.snapshot.value;
+      if (value is String && value.isNotEmpty) {
+        onGuest(value);
+      }
+    });
+  }
+
   Future<void> sendMessage(SignalingMessage message) async {
     if (_roomRef == null) {
       throw StateError('Oda bağlantısı yok.');

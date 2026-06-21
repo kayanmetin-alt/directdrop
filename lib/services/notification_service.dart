@@ -42,7 +42,6 @@ class NotificationService {
   Future<void> _initLocalNotifications() async {
     try {
       const androidInit = AndroidInitializationSettings('@mipmap/ic_launcher');
-      // macOS sandbox uygulamalarda izin otomatik istenemeyebilir; çökme olmasın.
       final darwinInit = DarwinInitializationSettings(
         requestAlertPermission: !Platform.isMacOS,
         requestBadgePermission: !Platform.isMacOS,
@@ -59,6 +58,31 @@ class NotificationService {
         },
       );
       _localNotificationsReady = true;
+
+      if (Platform.isAndroid) {
+        final android = _local.resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin>();
+        await android?.createNotificationChannel(
+          const AndroidNotificationChannel(
+            'directdrop_reconnect',
+            'DirectDrop Bağlantı İsteği',
+            description: 'Eşleşmiş cihazlardan gelen bağlantı istekleri',
+            importance: Importance.max,
+            playSound: true,
+            enableVibration: true,
+          ),
+        );
+        await android?.createNotificationChannel(
+          const AndroidNotificationChannel(
+            'directdrop_wake',
+            'DirectDrop Bağlantı',
+            description: 'Bağlantı ve dosya transferi uyarıları',
+            importance: Importance.max,
+            playSound: true,
+            enableVibration: true,
+          ),
+        );
+      }
     } catch (e) {
       debugPrint('Yerel bildirimler başlatılamadı: $e');
       _localNotificationsReady = false;
@@ -86,36 +110,9 @@ class NotificationService {
         }
       }
 
-      FirebaseMessaging.onMessage.listen((message) {
-        final request = _wakeFromFcmData(message.data);
-        if (request == null) return;
-        if (request.type == WakeRequestType.reconnect) {
-          final reconnect = ReconnectRequest(
-            fromDeviceId: request.fromDeviceId,
-            fromDeviceName: request.fromDeviceName,
-            clientCreatedAt: request.createdAt,
-          );
-          onReconnectPushReceived?.call(reconnect);
-          return;
-        }
-        showWakeNotification(request);
-        onWakeNotificationTapped?.call(request);
-      });
+      FirebaseMessaging.onMessage.listen(_handleForegroundMessage);
 
-      FirebaseMessaging.onMessageOpenedApp.listen((message) {
-        final request = _wakeFromFcmData(message.data);
-        if (request != null) {
-          onWakeNotificationTapped?.call(request);
-        }
-      });
-
-      final initial = await FirebaseMessaging.instance.getInitialMessage();
-      if (initial != null) {
-        final request = _wakeFromFcmData(initial.data);
-        if (request != null) {
-          onWakeNotificationTapped?.call(request);
-        }
-      }
+      FirebaseMessaging.onMessageOpenedApp.listen(_handleRemoteMessageOpened);
 
       // Push token kaydı opsiyonel; başarısız olursa uygulama çökmemeli.
       unawaited(_refreshFcmToken());
@@ -131,6 +128,45 @@ class NotificationService {
     }
   }
 
+  /// Uygulama bildirimden soğuk açıldığında çağrılır (main bootstrap sonrası).
+  Future<void> processInitialMessage() async {
+    if (Platform.isMacOS || Platform.isWindows) return;
+    try {
+      final initial = await FirebaseMessaging.instance.getInitialMessage();
+      if (initial != null) {
+        _handleRemoteMessageOpened(initial);
+      }
+    } catch (e) {
+      debugPrint('İlk FCM mesajı okunamadı: $e');
+    }
+  }
+
+  void _handleForegroundMessage(RemoteMessage message) {
+    final reconnect = _reconnectFromFcmData(message.data);
+    if (reconnect != null) {
+      onReconnectPushReceived?.call(reconnect);
+      return;
+    }
+
+    final request = _wakeFromFcmData(message.data);
+    if (request == null) return;
+    showWakeNotification(request);
+    onWakeNotificationTapped?.call(request);
+  }
+
+  void _handleRemoteMessageOpened(RemoteMessage message) {
+    final reconnect = _reconnectFromFcmData(message.data);
+    if (reconnect != null) {
+      onReconnectNotificationTapped?.call(reconnect);
+      return;
+    }
+
+    final request = _wakeFromFcmData(message.data);
+    if (request != null) {
+      onWakeNotificationTapped?.call(request);
+    }
+  }
+
   Future<void> _refreshFcmToken() async {
     try {
       final token = await FirebaseMessaging.instance.getToken();
@@ -140,6 +176,19 @@ class NotificationService {
     } catch (e) {
       debugPrint('FCM token alınamadı (önemsiz): $e');
     }
+  }
+
+  ReconnectRequest? _reconnectFromFcmData(Map<String, dynamic> data) {
+    final typeRaw = data['type'] as String? ?? '';
+    if (typeRaw != 'reconnect') return null;
+    final fromId = data['fromDeviceId'] as String? ?? '';
+    if (fromId.isEmpty) return null;
+    return ReconnectRequest(
+      fromDeviceId: fromId,
+      fromDeviceName: data['fromDeviceName'] as String? ?? 'Cihaz',
+      clientCreatedAt: int.tryParse(data['createdAt']?.toString() ?? '') ??
+          DateTime.now().millisecondsSinceEpoch,
+    );
   }
 
   WakeRequest? _wakeFromFcmData(Map<String, dynamic> data) {
@@ -235,17 +284,32 @@ class NotificationService {
 
     try {
       await _local.show(
-        request.fromDeviceId.hashCode,
+        request.clientCreatedAt % 1000000,
         title,
         body,
         NotificationDetails(
-          iOS: const DarwinNotificationDetails(),
-          macOS: const DarwinNotificationDetails(),
+          iOS: const DarwinNotificationDetails(
+            presentAlert: true,
+            presentBanner: true,
+            presentSound: true,
+            interruptionLevel: InterruptionLevel.timeSensitive,
+          ),
+          macOS: const DarwinNotificationDetails(
+            presentAlert: true,
+            presentBanner: true,
+            presentSound: true,
+            interruptionLevel: InterruptionLevel.timeSensitive,
+          ),
           android: AndroidNotificationDetails(
             'directdrop_reconnect',
             'DirectDrop Bağlantı İsteği',
-            importance: Importance.high,
-            priority: Priority.high,
+            channelDescription: 'Eşleşmiş cihazlardan gelen bağlantı istekleri',
+            importance: Importance.max,
+            priority: Priority.max,
+            ticker: title,
+            visibility: NotificationVisibility.public,
+            category: AndroidNotificationCategory.call,
+            fullScreenIntent: true,
             actions: <AndroidNotificationAction>[
               const AndroidNotificationAction(
                 'approve',
@@ -269,7 +333,6 @@ class NotificationService {
 
   Future<void> showWakeNotification(WakeRequest request) async {
     if (!_localNotificationsReady) {
-      // Bağlantıyı wake_listener yönetir; burada otomatik navigasyon yapma.
       return;
     }
 
@@ -303,13 +366,15 @@ class NotificationService {
   }
 }
 
+/// Uygulama kapalı/arka plandayken gelen FCM — Cloud Function bildirimi yeterli;
+/// dokunulunca uygulama açılır ve tam ekran onay ekranı gösterilir.
 @pragma('vm:entry-point')
 Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   try {
     await Firebase.initializeApp(
       options: DefaultFirebaseOptions.currentPlatform,
     );
-    debugPrint('Arka plan FCM: ${message.messageId}');
+    debugPrint('Arka plan FCM: ${message.messageId} type=${message.data['type']}');
   } catch (e) {
     debugPrint('Arka plan FCM handler: $e');
   }

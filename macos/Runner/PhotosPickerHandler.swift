@@ -22,7 +22,6 @@ final class PhotosPickerHandler: NSObject, PHPickerViewControllerDelegate {
     }
 
     pendingResult = result
-    presentingController = controller
 
     var config = PHPickerConfiguration(photoLibrary: .shared())
     config.selectionLimit = 0
@@ -30,7 +29,14 @@ final class PhotosPickerHandler: NSObject, PHPickerViewControllerDelegate {
 
     let picker = PHPickerViewController(configuration: config)
     picker.delegate = self
-    controller.presentAsSheet(picker)
+    picker.preferredContentSize = NSSize(width: 960, height: 640)
+
+    // Sheet, Flutter NSViewController üzerinde küçük kalıyor; modal pencere tam boyut verir.
+    let presenter = NSApp.mainWindow?.contentViewController ?? controller
+    presentingController = presenter
+
+    NSApp.activate(ignoringOtherApps: true)
+    presenter.presentAsModalWindow(picker)
   }
 
   func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {

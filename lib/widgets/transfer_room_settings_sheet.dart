@@ -72,8 +72,8 @@ class _TransferRoomSettingsSheetState extends State<TransferRoomSettingsSheet> {
                 title: const Text('Ekranı uyanık tut'),
                 subtitle: Text(
                   _screenWake.keepAwakeEnabled
-                      ? 'Oda açıkken ekran kapanmaz.'
-                      : 'Ekran normal şekilde kapanır.',
+                      ? 'Bu bağlantıda ekran kapanmaz.'
+                      : 'Bu bağlantıda ekran normal şekilde kapanır.',
                   style: theme.textTheme.bodySmall?.copyWith(
                     color: theme.colorScheme.onSurfaceVariant,
                   ),

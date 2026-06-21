@@ -46,6 +46,7 @@ class WebRtcService {
   bool _disposed = false;
   bool _remoteDescriptionSet = false;
   final List<RTCIceCandidate> _pendingCandidates = [];
+  final List<SignalingMessage> _pendingSignalingMessages = [];
 
   // Müzakere sağlamlığı için durum.
   String? _localOfferSdp;
@@ -53,7 +54,9 @@ class WebRtcService {
   String? _lastRemoteOfferSdp;
   Timer? _offerRetryTimer;
   int _offerAttempts = 0;
-  static const _maxOfferAttempts = 6;
+  // İlk offer/answer kaybolursa hızlı toparlanma için sık ama sınırlı yineleme.
+  static const _offerRetryInterval = Duration(milliseconds: 900);
+  static const _maxOfferAttempts = 10;
 
   static const _iceServers = [
     {'urls': 'stun:stun.l.google.com:19302'},
@@ -121,6 +124,27 @@ class WebRtcService {
       }
     };
 
+    _peerConnection!.onIceConnectionState = (state) {
+      if (_disposed) return;
+      debugPrint('ICE connection state: $state');
+      switch (state) {
+        case RTCIceConnectionState.RTCIceConnectionStateConnected:
+        case RTCIceConnectionState.RTCIceConnectionStateCompleted:
+          _stopOfferRetry();
+          if (_state != WebRtcConnectionState.connected) {
+            _setState(WebRtcConnectionState.connected);
+          }
+        case RTCIceConnectionState.RTCIceConnectionStateFailed:
+          _setState(WebRtcConnectionState.failed);
+        case RTCIceConnectionState.RTCIceConnectionStateDisconnected:
+          if (_state == WebRtcConnectionState.connected) {
+            _setState(WebRtcConnectionState.disconnected);
+          }
+        default:
+          break;
+      }
+    };
+
     _peerConnection!.onDataChannel = (channel) {
       _attachDataChannel(channel);
     };
@@ -134,11 +158,14 @@ class WebRtcService {
       );
       _attachDataChannel(_dataChannel!);
 
-      // Karşı tarafın signaling dinleyicisini kurması için kısa bekleme.
-      await Future<void>.delayed(const Duration(milliseconds: 250));
+      // Karşı taraf odaya katıldığında signaling dinleyicisi zaten kuruludur;
+      // kısa bir bekleme yeterli.
+      await Future<void>.delayed(const Duration(milliseconds: 120));
       await _createAndSendOffer();
       _startOfferRetry();
     }
+
+    await _flushPendingSignalingMessages();
   }
 
   Future<void> _createAndSendOffer() async {
@@ -175,7 +202,7 @@ class WebRtcService {
   void _startOfferRetry() {
     _offerRetryTimer?.cancel();
     _offerAttempts = 0;
-    _offerRetryTimer = Timer.periodic(const Duration(seconds: 2), (timer) {
+    _offerRetryTimer = Timer.periodic(_offerRetryInterval, (timer) {
       if (_disposed ||
           _remoteDescriptionSet ||
           _state == WebRtcConnectionState.connected ||
@@ -219,8 +246,29 @@ class WebRtcService {
 
   Future<void> handleSignalingMessage(SignalingMessage message) async {
     final pc = _peerConnection;
-    if (pc == null || _disposed) return;
+    if (pc == null || _disposed) {
+      if (!_disposed) _pendingSignalingMessages.add(message);
+      return;
+    }
 
+    await _dispatchSignalingMessage(pc, message);
+  }
+
+  Future<void> _flushPendingSignalingMessages() async {
+    if (_disposed || _pendingSignalingMessages.isEmpty) return;
+    final pending = List<SignalingMessage>.from(_pendingSignalingMessages);
+    _pendingSignalingMessages.clear();
+    final pc = _peerConnection;
+    if (pc == null) return;
+    for (final message in pending) {
+      await _dispatchSignalingMessage(pc, message);
+    }
+  }
+
+  Future<void> _dispatchSignalingMessage(
+    RTCPeerConnection pc,
+    SignalingMessage message,
+  ) async {
     switch (message.type) {
       case SignalingType.offer:
         await _handleOffer(pc, message);
@@ -268,6 +316,7 @@ class WebRtcService {
       await pc.setLocalDescription(answer);
       _localAnswerSdp = answer.sdp;
       await _sendAnswerMessage();
+      await _flushPendingSignalingMessages();
     } catch (e) {
       debugPrint('Offer işlenemedi: $e');
     }
@@ -368,6 +417,7 @@ class WebRtcService {
 
     _peerConnection?.onIceCandidate = null;
     _peerConnection?.onConnectionState = null;
+    _peerConnection?.onIceConnectionState = null;
     _peerConnection?.onDataChannel = null;
     _dataChannel?.onMessage = null;
     _dataChannel?.onDataChannelState = null;

@@ -14,6 +14,9 @@ class DeviceRegistryService {
   DeviceRegistryService({FirebaseDatabase? database})
       : _database = database ?? FirebaseDatabase.instance;
 
+  /// Firebase RTDB yeniden bağlanınca bekleyen istekleri tazelemek için.
+  static void Function()? onFirebaseReconnected;
+
   final FirebaseDatabase _database;
   Timer? _heartbeatTimer;
   StreamSubscription<DatabaseEvent>? _connectedSubscription;
@@ -120,12 +123,11 @@ class DeviceRegistryService {
       if (_heartbeatTimer == null) {
         startHeartbeat();
       }
+      DeviceRegistryService.onFirebaseReconnected?.call();
     } catch (e) {
       debugPrint('Firebase yeniden bağlanma kaydı başarısız: $e');
     }
   }
-
-  Future<void> refreshPresence() => _onFirebaseReconnected();
 
   void stopHeartbeat() {
     _heartbeatTimer?.cancel();
@@ -172,11 +174,18 @@ class DeviceRegistryService {
     });
   }
 
+  Future<Map<String, dynamic>?> readDevice(String deviceId) async {
+    final snapshot = await _devices.child(deviceId).get();
+    if (!snapshot.exists || snapshot.value is! Map) return null;
+    return Map<String, dynamic>.from(snapshot.value as Map);
+  }
+
   DatabaseReference reconnectRequestsRef(String deviceId) =>
       _devices.child(deviceId).child('reconnectRequests');
 
   /// Karşı cihazdan oda açmasını ister (QR tarama / listeden dokunma).
-  Future<void> sendReconnectRequest({
+  /// Dönen `clientCreatedAt` değeri, karşı tarafın göndereceği davetle eşleştirilir.
+  Future<int> sendReconnectRequest({
     required String targetDeviceId,
     required String fromDeviceId,
     required String fromDeviceName,
@@ -193,22 +202,22 @@ class DeviceRegistryService {
       'clientCreatedAt': createdAt,
     });
 
-    if (Platform.isIOS || Platform.isAndroid) {
-      try {
-        await sendWakeRequest(
-          targetDeviceId: targetDeviceId,
-          request: WakeRequest(
-            roomCode: '',
-            fromDeviceId: fromDeviceId,
-            fromDeviceName: fromDeviceName,
-            type: WakeRequestType.reconnect,
-            createdAt: createdAt,
-          ),
-        );
-      } catch (e) {
-        debugPrint('Yeniden bağlanma uyandırma gönderilemedi: $e');
-      }
+    // RTDB wake → Cloud Function FCM push (uygulama kapalıyken bile bildirim).
+    try {
+      await sendWakeRequest(
+        targetDeviceId: targetDeviceId,
+        request: WakeRequest(
+          roomCode: '',
+          fromDeviceId: fromDeviceId,
+          fromDeviceName: fromDeviceName,
+          type: WakeRequestType.reconnect,
+          createdAt: createdAt,
+        ),
+      );
+    } catch (e) {
+      debugPrint('Yeniden bağlanma uyandırma gönderilemedi: $e');
     }
+    return createdAt;
   }
 
   Future<void> sendReconnectRejection({
@@ -262,6 +271,32 @@ class DeviceRegistryService {
     });
   }
 
+  /// Beklenmedik kopuşta (uygulama öldürülmesi vb.) karşı cihaza sinyal gönderir.
+  Future<void> registerPeerDepartedOnDisconnect({
+    required String targetDeviceId,
+    required String fromDeviceId,
+    required String fromDeviceName,
+  }) async {
+    final fromAuthUid = await FirebaseAuthService.instance.requireUid();
+    final ref = peerDepartedRef(targetDeviceId).child(fromDeviceId);
+    await ref.onDisconnect().set({
+      'fromDeviceName': fromDeviceName,
+      'fromAuthUid': fromAuthUid,
+      'clientCreatedAt': ServerValue.timestamp,
+    });
+  }
+
+  Future<void> cancelPeerDepartedOnDisconnect({
+    required String targetDeviceId,
+    required String fromDeviceId,
+  }) async {
+    try {
+      await peerDepartedRef(targetDeviceId).child(fromDeviceId).onDisconnect().cancel();
+    } catch (e) {
+      debugPrint('peerDeparted onDisconnect iptali başarısız: $e');
+    }
+  }
+
   Future<void> clearPeerDeparted({
     required String myDeviceId,
     required String fromDeviceId,
@@ -291,6 +326,7 @@ class DeviceRegistryService {
     required String fromDeviceId,
     required String fromDeviceName,
     required String roomCode,
+    int? reconnectClientCreatedAt,
   }) async {
     final fromAuthUid = await FirebaseAuthService.instance.requireUid();
     final ref = _pairInvites.child(targetDeviceId).child(fromDeviceId);
@@ -301,6 +337,8 @@ class DeviceRegistryService {
       'fromAuthUid': fromAuthUid,
       'createdAt': ServerValue.timestamp,
       'clientCreatedAt': DateTime.now().millisecondsSinceEpoch,
+      if (reconnectClientCreatedAt != null)
+        'reconnectClientCreatedAt': reconnectClientCreatedAt,
     };
 
     try {
@@ -344,9 +382,4 @@ class DeviceRegistryService {
 
   /// Eski ad; davetler artık `pairInvites/{deviceId}` altında.
   DatabaseReference incomingPairRef(String deviceId) => pairInvitesRef(deviceId);
-
-  Future<String?> getFcmToken(String deviceId) async {
-    final snapshot = await _devices.child(deviceId).child('fcmToken').get();
-    return snapshot.value as String?;
-  }
 }

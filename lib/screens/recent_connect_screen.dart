@@ -8,6 +8,7 @@ import '../providers/transfer_session_controller.dart';
 import '../services/active_session_registry.dart';
 import '../services/paired_auto_connect_service.dart';
 import '../services/recent_connection_service.dart';
+import '../services/webrtc_service.dart';
 import '../utils/session_exit_helper.dart';
 import '../utils/user_facing_error.dart';
 import '../widgets/connect_waiting_panel.dart';
@@ -229,6 +230,58 @@ class _RecentConnectScreenState extends State<RecentConnectScreen> {
       builder: (context, _) {
         if (controller.isConnected) {
           _wasEverConnected = true;
+        }
+
+        if (controller.peerHasLeft ||
+            (controller.hadSuccessfulConnection &&
+                !controller.isConnected &&
+                !controller.isReconnecting &&
+                controller.connectionState == WebRtcConnectionState.failed)) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted) return;
+            unawaited(
+              SessionExitHelper.leaveAndGoHome(
+                controller: controller,
+                peerDeviceId: widget.peer.deviceId,
+                context: context,
+                snackMessage: '${widget.peer.displayName} bağlantıyı kapattı',
+                userInitiatedDisconnect: false,
+              ),
+            );
+          });
+          return const SizedBox.shrink();
+        }
+
+        if (!controller.isConnected &&
+            !_wasEverConnected &&
+            controller.connectionState == WebRtcConnectionState.failed) {
+          final message = controller.errorMessage ??
+              'Karşı cihazla bağlantı kurulamadı.';
+          return Scaffold(
+            appBar: AppBar(title: Text(widget.peer.displayName)),
+            body: SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(
+                      Icons.link_off,
+                      size: 48,
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                    const SizedBox(height: 16),
+                    Text(message, textAlign: TextAlign.center),
+                    const SizedBox(height: 24),
+                    FilledButton(
+                      onPressed: _connect,
+                      child: const Text('Tekrar dene'),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
         }
 
         if (controller.isConnected || _wasEverConnected) {

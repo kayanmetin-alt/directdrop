@@ -1,9 +1,9 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:uuid/uuid.dart';
 
+import '../models/device_presence.dart';
 import '../models/paired_device.dart';
 import '../models/room.dart';
 import '../models/signaling_message.dart';
@@ -51,8 +51,10 @@ class TransferSessionController extends ChangeNotifier {
   DateTime? _lastReconnectAt;
   Timer? _deferredReconnectTimer;
   Timer? _connectionWatchTimer;
+  Timer? _peerOfflineDebounce;
   StreamSubscription<WebRtcConnectionState>? _connectionSubscription;
   StreamSubscription<List<TransferFileItem>>? _transferSubscription;
+  StreamSubscription<DevicePresence>? _peerPresenceSubscription;
 
   String? peerDeviceId;
   String? peerDisplayName;
@@ -68,14 +70,18 @@ class TransferSessionController extends ChangeNotifier {
   bool get hadSuccessfulConnection => _hadSuccessfulConnection;
   bool get isDisposed => _disposed;
   bool get isConnected =>
-      _connectionState == WebRtcConnectionState.connected &&
+      _connectionState == WebRtcConnectionState.connected ||
       (_webRtc?.isDataChannelOpen ?? false);
+  bool get isDataChannelReady => _webRtc?.isDataChannelOpen ?? false;
   bool get isPaired => _session?.remotePeerId != null;
   FileTransferService? get fileTransfer => _fileTransfer;
 
   void bindPeer({required String deviceId, required String displayName}) {
     peerDeviceId = deviceId;
     peerDisplayName = displayName;
+    if (_session != null && !_disposed) {
+      unawaited(_armPeerDepartureSignals());
+    }
   }
 
   Future<void> acceptIncomingFile(String fileId) async {
@@ -162,38 +168,60 @@ class TransferSessionController extends ChangeNotifier {
 
   Future<void> _waitForGuest(String roomCode, String hostPeerId) async {
     final waitGeneration = ++_guestWaitGeneration;
-    final deadline = DateTime.now().add(const Duration(seconds: 90));
 
-    while (!_disposed &&
-        waitGeneration == _guestWaitGeneration &&
-        _session != null &&
-        _webRtc == null) {
-      if (DateTime.now().isAfter(deadline)) {
-        debugPrint('Misafir katılımı zaman aşımına uğradı.');
-        _errorMessage = 'Karşı cihaz katılmadı.';
-        if (!_disposed) notifyListeners();
-        return;
-      }
-
-      final guestPeerId = await _signaling.getGuestPeerId(roomCode);
-      if (_disposed || waitGeneration != _guestWaitGeneration) return;
-
-      if (guestPeerId != null) {
-        _session = _session!.copyWith(remotePeerId: guestPeerId);
-        await _startWebRtc(
-          remotePeerId: guestPeerId,
-          isInitiator: true,
-        );
-        await _signaling.replayPendingMessages(
-          localPeerId: hostPeerId,
-          onMessage: _onSignalingMessage,
-        );
-        _scheduleConnectionWatch();
-        unawaited(_persistPairIfNeeded());
-        break;
-      }
-      await Future<void>.delayed(const Duration(milliseconds: 500));
+    // Misafir zaten katılmış olabilir; önce bir kez kontrol et.
+    final existingGuest = await _signaling.getGuestPeerId(roomCode);
+    if (_disposed || waitGeneration != _guestWaitGeneration) return;
+    if (existingGuest != null) {
+      await _onGuestJoined(existingGuest, hostPeerId, waitGeneration);
+      return;
     }
+
+    // Olay tabanlı: misafir katılır katılmaz tetiklenir (polling yok).
+    final completer = Completer<String?>();
+    final sub = _signaling.watchGuestPeerId(roomCode, (guestPeerId) {
+      if (!completer.isCompleted) completer.complete(guestPeerId);
+    });
+
+    String? guestPeerId;
+    try {
+      guestPeerId = await completer.future
+          .timeout(const Duration(seconds: 90), onTimeout: () => null);
+    } finally {
+      await sub.cancel();
+    }
+
+    if (_disposed || waitGeneration != _guestWaitGeneration) return;
+
+    if (guestPeerId == null) {
+      debugPrint('Misafir katılımı zaman aşımına uğradı.');
+      _errorMessage = 'Karşı cihaz katılmadı.';
+      if (!_disposed) notifyListeners();
+      return;
+    }
+
+    await _onGuestJoined(guestPeerId, hostPeerId, waitGeneration);
+  }
+
+  Future<void> _onGuestJoined(
+    String guestPeerId,
+    String hostPeerId,
+    int waitGeneration,
+  ) async {
+    if (_disposed ||
+        waitGeneration != _guestWaitGeneration ||
+        _session == null ||
+        _webRtc != null) {
+      return;
+    }
+    _session = _session!.copyWith(remotePeerId: guestPeerId);
+    await _startWebRtc(remotePeerId: guestPeerId, isInitiator: true);
+    await _signaling.replayPendingMessages(
+      localPeerId: hostPeerId,
+      onMessage: _onSignalingMessage,
+    );
+    _scheduleConnectionWatch();
+    unawaited(_persistPairIfNeeded());
   }
 
   Future<RoomSession> joinRoom(String roomCode) async {
@@ -250,71 +278,11 @@ class TransferSessionController extends ChangeNotifier {
     }
   }
 
-  Future<RoomSession> connectToPairedDevice(
-    PairedDevice peer, {
-    WakeRequestType wakeType = WakeRequestType.connect,
-  }) async {
-    _setBusy(true);
-    try {
-      final peerId = _uuid.v4();
-      final roomCode = RoomCodeGenerator.generate();
-      final persistentId = await _persistentDeviceId();
-
-      await _signaling.createRoom(
-        roomCode: roomCode,
-        hostPeerId: peerId,
-        deviceName: deviceName,
-        persistentDeviceId: persistentId,
-      );
-
-      _session = RoomSession(
-        roomCode: roomCode,
-        peerId: peerId,
-        role: PeerRole.host,
-        deviceName: deviceName,
-      );
-
-      await _beginSignaling(roomCode: roomCode, localPeerId: peerId);
-
-      final isDesktop =
-          Platform.isWindows || Platform.isMacOS || Platform.isLinux;
-      if (!isDesktop) {
-        await _deviceRegistry.sendWakeRequest(
-          targetDeviceId: peer.deviceId,
-          request: WakeRequest(
-            roomCode: roomCode,
-            fromDeviceId: persistentId,
-            fromDeviceName: deviceName,
-            type: wakeType,
-            createdAt: DateTime.now().millisecondsSinceEpoch,
-          ),
-        );
-      }
-
-      await _deviceRegistry.sendPairInvite(
-        targetDeviceId: peer.deviceId,
-        fromDeviceId: persistentId,
-        fromDeviceName: deviceName,
-        roomCode: roomCode,
-      );
-
-      _waitForGuest(roomCode, peerId);
-      _syncScreenWake();
-      notifyListeners();
-      return _session!;
-    } catch (e) {
-      _errorMessage = e.toString();
-      notifyListeners();
-      rethrow;
-    } finally {
-      _setBusy(false);
-    }
-  }
-
   /// Uygulama açıkken eşleşmiş cihaza doğrudan davet gönderir (wake yerine).
   Future<RoomSession> hostPairInvite(
     PairedDevice peer, {
     String? roomCode,
+    int? reconnectClientCreatedAt,
   }) async {
     _setBusy(true);
     try {
@@ -350,8 +318,10 @@ class TransferSessionController extends ChangeNotifier {
         fromDeviceId: persistentId,
         fromDeviceName: deviceName,
         roomCode: actualRoomCode,
+        reconnectClientCreatedAt: reconnectClientCreatedAt,
       );
 
+      await _armPeerDepartureSignals();
       _waitForGuest(actualRoomCode, peerId);
       _syncScreenWake();
       notifyListeners();
@@ -400,8 +370,8 @@ class TransferSessionController extends ChangeNotifier {
   void _scheduleConnectionWatch() {
     _connectionWatchTimer?.cancel();
     final generation = ++_connectionWatchGeneration;
-    // Re-offer mekanizması ~12 sn içinde bağlar; 20 sn'de hâlâ yoksa tazele.
-    _connectionWatchTimer = Timer(const Duration(seconds: 20), () {
+    // Re-offer mekanizması ~12 sn içinde bağlar; 12 sn'de hâlâ yoksa tazele.
+    _connectionWatchTimer = Timer(const Duration(seconds: 12), () {
       unawaited(_onConnectionWatchTimeout(generation));
     });
   }
@@ -527,6 +497,7 @@ class TransferSessionController extends ChangeNotifier {
 
     peerDeviceId = remoteId;
     peerDisplayName = remoteName ?? 'Cihaz';
+    await _armPeerDepartureSignals();
   }
 
   void markBackgrounded() {
@@ -569,6 +540,18 @@ class TransferSessionController extends ChangeNotifier {
       return;
     }
 
+    unawaited(_scheduleDeferredReconnectAfterPeerCheck());
+  }
+
+  Future<void> _scheduleDeferredReconnectAfterPeerCheck() async {
+    if (_userInitiatedLeave || _peerHasLeft || _reconnecting || _wasBackgrounded) {
+      return;
+    }
+    if (await _isPeerOffline()) {
+      _markPeerHasLeft();
+      return;
+    }
+
     _deferredReconnectTimer?.cancel();
     final delay = _hadSuccessfulConnection
         ? const Duration(seconds: 12)
@@ -578,12 +561,85 @@ class TransferSessionController extends ChangeNotifier {
     });
   }
 
-  Future<void> reconnectIfNeeded() async {
+  Future<bool> _isPeerOffline() async {
+    final peerId = peerDeviceId;
+    if (peerId == null) return false;
+    try {
+      final data = await _deviceRegistry.readDevice(peerId);
+      if (data == null) return false;
+      return data['online'] != true;
+    } catch (e) {
+      debugPrint('Karşı cihaz durumu okunamadı: $e');
+      return false;
+    }
+  }
+
+  Future<void> _armPeerDepartureSignals() async {
+    if (_disposed || _session == null) return;
+    final peerId = peerDeviceId;
+    if (peerId == null) return;
+
+    final myId = await _persistentDeviceId();
+    try {
+      await _deviceRegistry.registerPeerDepartedOnDisconnect(
+        targetDeviceId: peerId,
+        fromDeviceId: myId,
+        fromDeviceName: deviceName,
+      );
+    } catch (e) {
+      debugPrint('peerDeparted onDisconnect kaydı başarısız: $e');
+    }
+
+    await _peerPresenceSubscription?.cancel();
+    _peerPresenceSubscription =
+        _deviceRegistry.watchPresence(peerId).listen(_onPeerPresenceChanged);
+  }
+
+  void _onPeerPresenceChanged(DevicePresence presence) {
+    if (_peerHasLeft || _userInitiatedLeave || _disposed) return;
+    if (presence.online) {
+      _peerOfflineDebounce?.cancel();
+      _peerOfflineDebounce = null;
+      return;
+    }
+
+    _peerOfflineDebounce ??= Timer(const Duration(seconds: 2), () {
+      _peerOfflineDebounce = null;
+      if (!_peerHasLeft && !_userInitiatedLeave && !_disposed) {
+        _markPeerHasLeft();
+      }
+    });
+  }
+
+  Future<void> _disarmPeerDepartureSignals() async {
+    _peerOfflineDebounce?.cancel();
+    _peerOfflineDebounce = null;
+    await _peerPresenceSubscription?.cancel();
+    _peerPresenceSubscription = null;
+
+    final peerId = peerDeviceId;
+    if (peerId == null) return;
+    try {
+      final myId = await _persistentDeviceId();
+      await _deviceRegistry.cancelPeerDepartedOnDisconnect(
+        targetDeviceId: peerId,
+        fromDeviceId: myId,
+      );
+    } catch (e) {
+      debugPrint('peerDeparted sinyalleri kapatılamadı: $e');
+    }
+  }
+
+  Future<void> reconnectIfNeeded({bool force = false}) async {
     if (_disposed || !isPaired || _peerHasLeft || _userInitiatedLeave) return;
     if (_reconnecting) return;
 
-    final channelOpen = _webRtc?.isDataChannelOpen ?? false;
-    if (isConnected && channelOpen) return;
+    if (await _isPeerOffline()) {
+      _markPeerHasLeft();
+      return;
+    }
+
+    if (isConnected && !force) return;
 
     final lastAttempt = _lastReconnectAt;
     if (lastAttempt != null &&
@@ -609,6 +665,21 @@ class TransferSessionController extends ChangeNotifier {
 
       final session = _session!;
       final isInitiator = session.role == PeerRole.host;
+
+      // Konuk yeniden bağlanırken ev sahibine haber ver (yeni offer için).
+      if (!isInitiator && session.remotePeerId != null) {
+        try {
+          await _signaling.sendMessage(
+            SignalingMessage(
+              type: SignalingType.peerJoined,
+              fromPeerId: session.peerId,
+              toPeerId: session.remotePeerId!,
+            ),
+          );
+        } catch (e) {
+          debugPrint('peerJoined sinyali gönderilemedi: $e');
+        }
+      }
 
       // Konuk önce hazır olsun; ev sahibi yeni teklif gönderir.
       if (isInitiator) {
@@ -638,6 +709,13 @@ class TransferSessionController extends ChangeNotifier {
   Future<void> _onSignalingMessage(SignalingMessage message) async {
     if (message.type == SignalingType.peerLeft) {
       _markPeerHasLeft();
+      return;
+    }
+
+    if (message.type == SignalingType.peerJoined &&
+        _session?.role == PeerRole.host &&
+        !_reconnecting) {
+      unawaited(reconnectIfNeeded(force: true));
       return;
     }
 
@@ -677,11 +755,6 @@ class TransferSessionController extends ChangeNotifier {
     );
   }
 
-  Future<void> pickAndSendFiles() async {
-    // file_picker UI katmanında çağrılır; burada sadece path listesi gönderilir.
-    throw UnimplementedError('UI üzerinden sendFiles çağırın.');
-  }
-
   Future<void> sendFilePaths(List<String> paths) async {
     if (_fileTransfer == null) {
       throw StateError('Bağlantı henüz hazır değil.');
@@ -711,6 +784,8 @@ class TransferSessionController extends ChangeNotifier {
     _deferredReconnectTimer?.cancel();
     _deferredReconnectTimer = null;
 
+    await _disarmPeerDepartureSignals();
+
     // Karşı tarafa sinyal gönder — WebRTC kapatılmadan önce; ICE kopunca yeniden bağlanma tetiklenmesin.
     try {
       final session = _session;
@@ -727,7 +802,8 @@ class TransferSessionController extends ChangeNotifier {
         await _signaling.closeRoom();
       }
 
-      if (userInitiated && peerId != null) {
+      if (peerId != null &&
+          (_hadSuccessfulConnection || _session?.remotePeerId != null)) {
         await _deviceRegistry.sendPeerDeparted(
           targetDeviceId: peerId,
           fromDeviceId: myId,

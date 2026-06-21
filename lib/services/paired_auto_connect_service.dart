@@ -165,49 +165,6 @@ class PairedAutoConnectService extends ChangeNotifier {
     _scheduleSync();
   }
 
-  /// Karşı cihaz onay verince ev sahibi olup oda açar.
-  Future<TransferSessionController?> approveIncomingReconnect(
-    PairedDevice peer,
-  ) async {
-    await ensureRunning();
-    if (_manualSessionActive) {
-      throw StateError('Manuel oturum açık. Önce mevcut ekranı kapatın.');
-    }
-    if (isConnectedTo(peer.deviceId)) {
-      return _sessionsByPeerId[peer.deviceId];
-    }
-    if (isHostingPeer(peer.deviceId)) {
-      return _sessionsByPeerId[peer.deviceId];
-    }
-
-    final existing = _sessionsByPeerId[peer.deviceId];
-    if (existing != null && !existing.isConnected) {
-      await _disposeSession(peer.deviceId);
-    }
-
-    await _hostForPeer(peer);
-    return _sessionsByPeerId[peer.deviceId];
-  }
-
-  @Deprecated('Onay akışı RecentConnectionService üzerinden yapılır')
-  Future<void> handleIncomingReconnect({
-    required String fromDeviceId,
-    required String fromDeviceName,
-  }) async {
-    await PairedDevicesService.instance.load();
-    var peer = PairedDevicesService.instance.findByDeviceId(fromDeviceId);
-    if (peer == null) {
-      await PairedDevicesService.instance.savePair(
-        deviceId: fromDeviceId,
-        displayName: fromDeviceName,
-        platform: 'unknown',
-      );
-      peer = PairedDevicesService.instance.findByDeviceId(fromDeviceId);
-    }
-    if (peer == null) return;
-    await approveIncomingReconnect(peer);
-  }
-
   /// Manuel dokunuş — force:true ise cihaz kimliği fark etmez, oda açılır.
   Future<void> requestConnection(
     PairedDevice peer, {
@@ -238,34 +195,6 @@ class PairedAutoConnectService extends ChangeNotifier {
     // Otomatik senkron: düşük deviceId ev sahibi olur; yüksek ID daveti bekler.
     await processPendingInvites();
     _scheduleSync(immediate: true);
-  }
-
-  /// Eşleşmiş cihazdan gelen wake/davet — onay ekranı açılmaz.
-  Future<void> handleIncomingWake(WakeRequest request) async {
-    await _reconcileIncomingPeerId(request);
-    final fromId = request.fromDeviceId;
-    if (fromId.isEmpty || !_isKnownIncomingPeer(request)) return;
-    if (isConnectedTo(fromId)) return;
-
-    final myId =
-        _myDeviceId ?? await DeviceIdentityService.instance.getDeviceId();
-
-    if (_shouldHost(myId, fromId)) {
-      // Biz ev sahibiyiz; karşı taraf yanlışlıkla oda açmış olabilir.
-      return;
-    }
-
-    final existing = _sessionsByPeerId[fromId];
-    if (existing != null) {
-      if (existing.isConnected) return;
-      if (existing.session?.role == PeerRole.host) {
-        await _disposeSession(fromId);
-      } else if (_connectingPeers.contains(fromId)) {
-        return;
-      }
-    }
-
-    await acceptWakeRequest(request);
   }
 
   Future<TransferSessionController> acceptWakeRequest(
@@ -438,8 +367,13 @@ class PairedAutoConnectService extends ChangeNotifier {
 
   void _onPresenceChanged() {
     for (final peer in PairedDevicesService.instance.devices) {
-      // Oturumu yalnızca cihaz gerçekten çevrimdışı olunca kapat (35 sn değil 45 sn).
-      if (!PairedPresenceService.instance.isOnline(peer.deviceId) &&
+      // Yalnızca GERÇEK bir çevrimdışı presence kaydı varsa oturumu kapat.
+      // Presence verisi yoksa (servis pasif) oturumu yanlışlıkla kapatma —
+      // aksi halde yeni kurulan bağlantı anında düşürülür.
+      final presence =
+          PairedPresenceService.instance.presenceFor(peer.deviceId);
+      if (presence != null &&
+          !presence.isActive &&
           _sessionsByPeerId.containsKey(peer.deviceId)) {
         unawaited(_disposeSession(peer.deviceId));
       }
@@ -645,29 +579,7 @@ class PairedAutoConnectService extends ChangeNotifier {
     return PairedDevicesService.instance.findByDeviceId(deviceId) != null;
   }
 
-  bool _isKnownIncomingPeer(WakeRequest request) {
-    return PairedDevicesService.instance.isKnownPeer(
-      deviceId: request.fromDeviceId,
-      displayName: request.fromDeviceName,
-    );
-  }
-
   bool _isKnownIncomingPeerFromId(String deviceId) => _isKnownPeer(deviceId);
-
-  Future<void> _reconcileIncomingPeerId(WakeRequest request) async {
-    if (_isKnownPeer(request.fromDeviceId)) return;
-
-    final byName = PairedDevicesService.instance.findByDisplayName(
-      request.fromDeviceName,
-    );
-    if (byName == null) return;
-
-    await PairedDevicesService.instance.reconcileDeviceId(
-      oldDeviceId: byName.deviceId,
-      newDeviceId: request.fromDeviceId,
-    );
-    _migrateSessionKey(byName.deviceId, request.fromDeviceId);
-  }
 
   void _migrateSessionKey(String oldId, String newId) {
     if (oldId == newId) return;

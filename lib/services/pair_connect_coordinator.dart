@@ -1,10 +1,5 @@
-import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:flutter/foundation.dart';
-
-import '../utils/room_code_generator.dart';
-import 'firebase_auth_service.dart';
-import 'firebase_signaling_service.dart';
 
 /// Tek bir yeniden bağlanma oturumu (çift oda / çift tıklama önlenir).
 class PairConnectRole {
@@ -45,33 +40,27 @@ class PairConnectCoordinator {
 
   final FirebaseDatabase _database;
   static const _sessionMaxAge = Duration(minutes: 3);
-  final FirebaseSignalingService _signaling = FirebaseSignalingService();
-
-  Future<bool> _isRoomJoinable(String roomCode) async {
-    try {
-      await _signaling.assertRoomJoinable(roomCode);
-      return true;
-    } on StateError {
-      return false;
-    }
-  }
 
   DatabaseReference get _sessions => _database.ref('pairConnect');
 
   static String pairKey(String deviceIdA, String deviceIdB) {
     return deviceIdA.compareTo(deviceIdB) < 0
-        ? '${deviceIdA}__${deviceIdB}'
-        : '${deviceIdB}__${deviceIdA}';
+        ? '${deviceIdA}__$deviceIdB'
+        : '${deviceIdB}__$deviceIdA';
   }
 
   DatabaseReference sessionRef(String myId, String peerId) =>
       _sessions.child(pairKey(myId, peerId));
 
+  // Cihaz saatleri arasındaki fark için tolerans (emülatör vb.).
+  static const _clockSkewToleranceMs = 120000;
+
   bool _isFreshSession(Map<String, dynamic> data) {
     final ms = (data['clientUpdatedAt'] as num?)?.toInt();
     if (ms == null) return false;
     final age = DateTime.now().millisecondsSinceEpoch - ms;
-    return age >= 0 && age <= _sessionMaxAge.inMilliseconds;
+    return age >= -_clockSkewToleranceMs &&
+        age <= _sessionMaxAge.inMilliseconds;
   }
 
   PairConnectRole? _roleFromSnapshot(
@@ -91,63 +80,6 @@ class PairConnectCoordinator {
       return PairConnectRole.host(roomCode, roomReady: roomReady);
     }
     return PairConnectRole.guest(roomCode, roomReady: roomReady);
-  }
-
-  /// Ev sahibi veya misafir rolünü tek oturumda belirler.
-  Future<PairConnectRole> resolveRole({
-    required String myDeviceId,
-    required String peerDeviceId,
-  }) async {
-    final ref = sessionRef(myDeviceId, peerDeviceId);
-    final existing = await ref.get();
-    final parsed = _roleFromSnapshot(existing, myDeviceId);
-    if (parsed != null) {
-      if (await _isRoomJoinable(parsed.roomCode)) {
-        return parsed;
-      }
-      try {
-        await ref.remove();
-      } catch (e) {
-        debugPrint('Eski pairConnect silinemedi: $e');
-      }
-    }
-
-    final roomCode = RoomCodeGenerator.generate();
-    final uid = await FirebaseAuthService.instance.requireUid();
-    try {
-      await ref.set({
-        'hostDeviceId': myDeviceId,
-        'roomCode': roomCode,
-        'roomReady': false,
-        'fromAuthUid': uid,
-        'clientUpdatedAt': DateTime.now().millisecondsSinceEpoch,
-      });
-    } on FirebaseException catch (e) {
-      if (e.code != 'permission-denied') rethrow;
-      debugPrint('pairConnect yazılamadı (yarış), yeniden okunuyor');
-    }
-
-    await Future<void>.delayed(const Duration(milliseconds: 400));
-    final after = await ref.get();
-    final role = _roleFromSnapshot(after, myDeviceId);
-    if (role != null) return role;
-
-    return PairConnectRole.host(roomCode);
-  }
-
-  Future<void> markRoomReady({
-    required String myDeviceId,
-    required String peerDeviceId,
-  }) async {
-    final ref = sessionRef(myDeviceId, peerDeviceId);
-    try {
-      await ref.update({
-        'roomReady': true,
-        'clientUpdatedAt': DateTime.now().millisecondsSinceEpoch,
-      });
-    } catch (e) {
-      debugPrint('pairConnect roomReady güncellenemedi: $e');
-    }
   }
 
   Future<PairConnectRole?> readRole({

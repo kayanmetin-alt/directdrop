@@ -4,7 +4,6 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'dart:async';
 import 'dart:io';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import 'firebase_options.dart';
@@ -13,6 +12,7 @@ import 'screens/incoming_connect_screen.dart';
 import 'screens/incoming_reconnect_screen.dart';
 import 'screens/recent_connect_screen.dart';
 import 'services/app_version_service.dart';
+import 'services/device_registry_service.dart';
 import 'services/download_directory_service.dart';
 import 'services/firebase_auth_service.dart';
 import 'services/notification_service.dart';
@@ -23,13 +23,18 @@ import 'services/paired_auto_connect_service.dart';
 import 'services/persistent_invite_code_service.dart';
 import 'services/recent_connection_service.dart';
 import 'services/screen_wake_service.dart';
+import 'services/startup_gate.dart';
 import 'services/transfer_history_service.dart';
 import 'services/wake_listener_service.dart';
 import 'utils/directdrop_scroll_behavior.dart';
+import 'widgets/incoming_reconnect_prompt.dart';
 import 'models/reconnect_request.dart';
 import 'models/paired_device.dart';
 
 final GlobalKey<NavigatorState> rootNavigatorKey = GlobalKey<NavigatorState>();
+
+/// Açılışta ölümcül hata (ör. auth) olursa hata ekranını tetikler.
+final ValueNotifier<String?> startupErrorNotifier = ValueNotifier<String?>(null);
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -39,50 +44,106 @@ Future<void> main() async {
     debugPrint('FlutterError: ${details.exceptionAsString()}');
   };
 
-  String? startupError;
-
+  // Firebase çekirdeğini başlat — yereldir, hızlıdır; yine de zaman aşımı koy.
   try {
     await Firebase.initializeApp(
       options: DefaultFirebaseOptions.currentPlatform,
-    );
+    ).timeout(const Duration(seconds: 12));
     try {
       FirebaseDatabase.instance.setPersistenceEnabled(false);
     } catch (e) {
       debugPrint('Firebase persistence kapatılamadı: $e');
     }
-
     if (Platform.isIOS || Platform.isAndroid) {
       FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
     }
-
-    try {
-      await FirebaseAuthService.instance.ensureSignedIn();
-    } catch (e, stack) {
-      startupError = e.toString();
-      debugPrint('Firebase Auth başlatılamadı: $e\n$stack');
-    }
-
-    if (startupError == null) {
-      await SessionCleanupService.instance.resetOnLaunch();
-      await SessionCleanupService.instance.onLaunchAfterAuth();
-      try {
-        await NotificationService.instance.initialize();
-      } catch (e, stack) {
-        debugPrint('Bildirim servisi başlatılamadı: $e\n$stack');
-      }
-      unawaited(AppVersionService.instance.load());
-      unawaited(_startBackgroundServices());
-      _wireAutoReconnect();
-      _wireIncomingReconnect();
-      _wireNotificationWake();
-      _wireWakeListener();
-    }
   } catch (e, stack) {
-    startupError = 'Uygulama başlatılamadı: $e';
-    debugPrint('main başlatma hatası: $e\n$stack');
+    debugPrint('Firebase başlatılamadı: $e\n$stack');
+    startupErrorNotifier.value = 'Uygulama başlatılamadı: $e';
   }
 
-  runApp(DirectDropApp(startupError: startupError));
+  // UI'ı HEMEN göster — hiçbir ağ işlemi açılışı bloklamasın.
+  runApp(const DirectDropApp());
+
+  // Auth + çökme sonrası temizlik + servisleri arka planda, zaman aşımlarıyla yürüt.
+  unawaited(_bootstrap());
+}
+
+/// Açılış işlerini arka planda, takılmaya karşı korumalı şekilde yürütür.
+Future<void> _bootstrap() async {
+  if (startupErrorNotifier.value != null) {
+    StartupGate.markReady();
+    return;
+  }
+
+  try {
+    await FirebaseAuthService.instance.ensureSignedIn();
+  } catch (e, stack) {
+    debugPrint('Firebase Auth başlatılamadı: $e\n$stack');
+    startupErrorNotifier.value = e.toString();
+    StartupGate.markReady();
+    return;
+  }
+
+  // Çökme/zorla kapatma sonrası yarım kalan oturumları sıfırla (zaman aşımlı).
+  try {
+    await SessionCleanupService.instance.resetOnLaunch();
+    await SessionCleanupService.instance.onLaunchAfterAuth().timeout(
+      const Duration(seconds: 10),
+      onTimeout: () {
+        debugPrint('Çökme sonrası temizlik zaman aşımına uğradı; devam ediliyor.');
+      },
+    );
+  } catch (e, stack) {
+    debugPrint('Açılış temizliği hatası: $e\n$stack');
+  } finally {
+    // Temizlik bitti (ya da zaman aşımı) — dinleyiciler artık ilerleyebilir.
+    StartupGate.markReady();
+  }
+
+  try {
+    await NotificationService.instance.initialize();
+  } catch (e, stack) {
+    debugPrint('Bildirim servisi başlatılamadı: $e\n$stack');
+  }
+  unawaited(AppVersionService.instance.load());
+  unawaited(_startBackgroundServices());
+  _wireAutoReconnect();
+  _wireIncomingReconnect();
+  _wireFirebaseReconnect();
+  _wireNotificationWake();
+  _wireWakeListener();
+  await NotificationService.instance.processInitialMessage();
+}
+
+/// Hata ekranındaki "Tekrar dene" düğmesi için: Firebase'i (gerekirse) yeniden
+/// başlatıp açılış akışını tekrar dener.
+void retryStartup() {
+  startupErrorNotifier.value = null;
+  unawaited(_retryBootstrap());
+}
+
+Future<void> _retryBootstrap() async {
+  try {
+    if (Firebase.apps.isEmpty) {
+      await Firebase.initializeApp(
+        options: DefaultFirebaseOptions.currentPlatform,
+      ).timeout(const Duration(seconds: 12));
+      try {
+        FirebaseDatabase.instance.setPersistenceEnabled(false);
+      } catch (_) {}
+      if (Platform.isIOS || Platform.isAndroid) {
+        FirebaseMessaging.onBackgroundMessage(
+          firebaseMessagingBackgroundHandler,
+        );
+      }
+    }
+  } catch (e, stack) {
+    debugPrint('Firebase yeniden başlatılamadı: $e\n$stack');
+    startupErrorNotifier.value = 'Uygulama başlatılamadı: $e';
+    return;
+  }
+  await _bootstrap();
 }
 
 Future<void> _startBackgroundServices() async {
@@ -116,18 +177,27 @@ void _wireWakeListener() {
   });
 }
 
+void _wireFirebaseReconnect() {
+  DeviceRegistryService.onFirebaseReconnected = () {
+    unawaited(
+      RecentConnectionService.instance.refreshPendingReconnectRequests(),
+    );
+  };
+}
+
 void _wireIncomingReconnect() {
   NotificationService.instance.onReconnectPushReceived = (request) {
     unawaited(RecentConnectionService.instance.promptIncomingReconnect(request));
   };
 
   NotificationService.instance.onReconnectNotificationTapped = (request) {
-    RecentConnectionService.instance.promptIncomingReconnect(request);
-    _openIncomingReconnect(request);
+    unawaited(
+      RecentConnectionService.instance.promptIncomingReconnect(request),
+    );
+    IncomingReconnectPrompt.scheduleShow(request);
   };
 
   NotificationService.instance.onReconnectNotificationApproved = (request) {
-    RecentConnectionService.instance.promptIncomingReconnect(request);
     _openIncomingReconnect(request, autoApprove: true);
   };
 
@@ -135,6 +205,11 @@ void _wireIncomingReconnect() {
     unawaited(
       RecentConnectionService.instance.rejectIncomingReconnectRequest(request),
     );
+  };
+
+  // Tüm platformlarda ön plandayken tam ekran "gelen arama" ekranını göster.
+  RecentConnectionService.instance.onShowReconnectPrompt = (request) {
+    IncomingReconnectPrompt.scheduleShow(request);
   };
 }
 
@@ -183,9 +258,7 @@ void _wireAutoReconnect() {
 }
 
 class DirectDropApp extends StatefulWidget {
-  const DirectDropApp({super.key, this.startupError});
-
-  final String? startupError;
+  const DirectDropApp({super.key});
 
   @override
   State<DirectDropApp> createState() => _DirectDropAppState();
@@ -196,12 +269,19 @@ class _DirectDropAppState extends State<DirectDropApp> with WidgetsBindingObserv
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _retryReconnectPrompt();
+    });
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
+  }
+
+  void _retryReconnectPrompt() {
+    IncomingReconnectPrompt.retryPendingIfAny();
   }
 
   @override
@@ -213,20 +293,29 @@ class _DirectDropAppState extends State<DirectDropApp> with WidgetsBindingObserv
         }),
       );
       unawaited(RecentConnectionService.instance.ensureListening());
+      unawaited(RecentConnectionService.instance.refreshPendingReconnectRequests());
       unawaited(WakeListenerService.instance.ensureRunning());
+      _retryReconnectPrompt();
     } else if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached) {
-      unawaited(SessionCleanupService.instance.markGracefulShutdown());
+      final hasActiveSession =
+          ActiveSessionRegistry.instance.hasActiveSession;
       if (state == AppLifecycleState.detached) {
+        // Düzenli kapanış: oturumu kapat, sonra "düzgün kapandı" işaretle.
         RecentConnectionService.instance.stopListening();
         unawaited(ActiveSessionRegistry.instance.disconnectActive());
+        unawaited(SessionCleanupService.instance.markGracefulShutdown());
+      } else if (!hasActiveSession) {
+        // Sadece aktif bir transfer/bağlantı yokken arka plana alınmayı
+        // "düzgün" say. Bağlantı ortasında öldürülürse işaret konmaz, böylece
+        // sonraki açılışta her şey sıfırlanır.
+        unawaited(SessionCleanupService.instance.markGracefulShutdown());
       }
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final startupError = widget.startupError;
     return MaterialApp(
       navigatorKey: rootNavigatorKey,
       title: 'DirectDrop',
@@ -238,9 +327,15 @@ class _DirectDropAppState extends State<DirectDropApp> with WidgetsBindingObserv
         colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF2563EB)),
         useMaterial3: true,
       ),
-      home: startupError != null
-          ? _StartupErrorScreen(message: startupError)
-          : const HomeScreen(),
+      home: ValueListenableBuilder<String?>(
+        valueListenable: startupErrorNotifier,
+        builder: (context, error, _) {
+          if (error != null) {
+            return _StartupErrorScreen(message: error);
+          }
+          return const HomeScreen();
+        },
+      ),
     );
   }
 }
@@ -282,6 +377,14 @@ class _StartupErrorScreen extends StatelessWidget {
                   '• Keychain Access uygulamasında "DirectDrop" veya '
                   '"firebase" girdilerini silip tekrar deneyin',
                 ),
+              const SizedBox(height: 24),
+              Center(
+                child: FilledButton.icon(
+                  onPressed: retryStartup,
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('Tekrar dene'),
+                ),
+              ),
             ],
           ),
         ),

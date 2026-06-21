@@ -40,6 +40,7 @@ class PairedDevicesService extends ChangeNotifier {
     required String deviceId,
     required String displayName,
     required String platform,
+    String? inviteCode,
   }) async {
     await load();
     final now = DateTime.now();
@@ -48,17 +49,31 @@ class PairedDevicesService extends ChangeNotifier {
       _devices[index] = _devices[index].copyWith(
         displayName: displayName,
         lastConnectedAt: now,
+        inviteCode: inviteCode ?? _devices[index].inviteCode,
       );
     } else {
-      _devices.insert(
-        0,
-        PairedDevice(
+      final byInviteIndex = inviteCode == null
+          ? -1
+          : _devices.indexWhere((d) => d.inviteCode == inviteCode);
+      if (byInviteIndex >= 0) {
+        _devices[byInviteIndex] = _devices[byInviteIndex].copyWith(
           deviceId: deviceId,
           displayName: displayName,
-          platform: platform,
           lastConnectedAt: now,
-        ),
-      );
+          inviteCode: inviteCode,
+        );
+      } else {
+        _devices.insert(
+          0,
+          PairedDevice(
+            deviceId: deviceId,
+            displayName: displayName,
+            platform: platform,
+            lastConnectedAt: now,
+            inviteCode: inviteCode,
+          ),
+        );
+      }
     }
     _devices.sort((a, b) => b.lastConnectedAt.compareTo(a.lastConnectedAt));
     await _persist();

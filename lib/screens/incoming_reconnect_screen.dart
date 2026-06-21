@@ -57,7 +57,8 @@ class _IncomingReconnectScreenState extends State<IncomingReconnectScreen> {
   }
 
   Future<void> _reject() async {
-    await RecentConnectionService.instance.rejectIncomingReconnect();
+    await RecentConnectionService.instance
+        .rejectReconnectRequest(widget.request);
     if (mounted) Navigator.of(context).pop();
   }
 

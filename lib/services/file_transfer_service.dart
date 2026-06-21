@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
@@ -62,8 +61,6 @@ class FileTransferService {
   final Map<String, Completer<void>> _pendingPongs = {};
   final Set<String> _pausedFileIds = {};
   final Set<String> _cancelledFileIds = {};
-  String? _activeSendFileId;
-  bool _sending = false;
   Future<void> _incomingChain = Future.value();
 
   List<TransferFileItem> get items => List.unmodifiable(_items);
@@ -260,9 +257,6 @@ class FileTransferService {
       await Future<void>.delayed(const Duration(milliseconds: 100));
     }
 
-    _sending = true;
-    _activeSendFileId = fileId;
-
     final readyCompleter = Completer<void>();
     _pendingReady[fileId] = readyCompleter;
 
@@ -334,8 +328,6 @@ class FileTransferService {
       _pendingReady.remove(fileId);
       _pausedFileIds.remove(fileId);
       _cancelledFileIds.remove(fileId);
-      _activeSendFileId = null;
-      _sending = false;
       _emit();
     }
   }

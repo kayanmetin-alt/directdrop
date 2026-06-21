@@ -27,3 +27,6 @@ windows/installer/redist/vc_redist.x64.exe
 .env
 .env.*
 *.keystore
+
+# Firebase Functions
+functions/node_modules/

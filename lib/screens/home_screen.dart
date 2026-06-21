@@ -62,6 +62,8 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _approveReconnect(ReconnectRequest request) async {
+    _recentConnect.dismissIncomingReconnectUi(request);
+    if (!mounted) return;
     Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => IncomingReconnectScreen(
@@ -72,68 +74,44 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  void _rejectReconnect() {
-    unawaited(_recentConnect.rejectIncomingReconnect());
+  void _rejectReconnect(ReconnectRequest request) {
+    unawaited(_recentConnect.rejectReconnectRequest(request));
   }
 
-  Widget _buildReconnectPromptCard(
+  Widget _buildReconnectTopRow(
     ThemeData theme,
     ReconnectRequest reconnect,
   ) {
-    return Card(
-      elevation: 0,
+    return Material(
       color: theme.colorScheme.secondaryContainer,
+      borderRadius: BorderRadius.circular(12),
       child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
+        padding: const EdgeInsets.fromLTRB(12, 10, 4, 10),
+        child: Row(
           children: [
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Icon(
-                  Icons.link,
-                  color: theme.colorScheme.primary,
-                  size: 28,
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        '${reconnect.fromDeviceName} bağlantı kurmak istiyor.',
-                        style: theme.textTheme.titleMedium,
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        'Bağlantıyı onaylıyor musunuz?',
-                        style: theme.textTheme.bodyMedium?.copyWith(
-                          color: theme.colorScheme.onSecondaryContainer,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
+            Icon(
+              Icons.link,
+              color: theme.colorScheme.primary,
+              size: 22,
             ),
-            const SizedBox(height: 16),
-            Row(
-              children: [
-                Expanded(
-                  child: FilledButton(
-                    onPressed: () => _approveReconnect(reconnect),
-                    child: const Text('Onayla'),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: _rejectReconnect,
-                    child: const Text('Reddet'),
-                  ),
-                ),
-              ],
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                '${reconnect.fromDeviceName} bağlantı kurmak istiyor',
+                style: theme.textTheme.titleSmall,
+              ),
+            ),
+            IconButton(
+              icon: const Icon(Icons.check_circle_outline),
+              color: theme.colorScheme.primary,
+              tooltip: 'Onayla',
+              onPressed: () => _approveReconnect(reconnect),
+            ),
+            IconButton(
+              icon: const Icon(Icons.cancel_outlined),
+              color: theme.colorScheme.error,
+              tooltip: 'Reddet',
+              onPressed: () => _rejectReconnect(reconnect),
             ),
           ],
         ),
@@ -141,13 +119,40 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  Widget? _reconnectRowActions(
+    ThemeData theme,
+    ReconnectRequest? pendingReconnect,
+  ) {
+    if (pendingReconnect == null) return null;
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        IconButton(
+          icon: const Icon(Icons.check_circle_outline),
+          color: theme.colorScheme.primary,
+          tooltip: 'Onayla',
+          onPressed: () => _approveReconnect(pendingReconnect),
+        ),
+        IconButton(
+          icon: const Icon(Icons.cancel_outlined),
+          color: theme.colorScheme.error,
+          tooltip: 'Reddet',
+          onPressed: () => _rejectReconnect(pendingReconnect),
+        ),
+      ],
+    );
+  }
+
   Widget _deviceRowCard({
     required ThemeData theme,
     required PairedDevice device,
-    required bool hasPendingReconnect,
+    required ReconnectRequest? pendingReconnect,
   }) {
+    final rowActions = _reconnectRowActions(theme, pendingReconnect);
+
     return Card(
-      color: hasPendingReconnect
+      color: pendingReconnect != null
           ? theme.colorScheme.secondaryContainer.withValues(alpha: 0.35)
           : null,
       child: ListTile(
@@ -157,24 +162,27 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
         title: Text(device.displayName),
         subtitle: Text(
-          hasPendingReconnect
+          pendingReconnect != null
               ? 'Bağlantı isteği bekliyor'
               : 'Son: ${_formatLastSeen(device.lastConnectedAt)}',
         ),
-        trailing: PopupMenuButton<String>(
-          onSelected: (value) {
-            if (value == 'remove') {
-              _pairedService.remove(device.deviceId);
-            }
-          },
-          itemBuilder: (context) => const [
-            PopupMenuItem(
-              value: 'remove',
-              child: Text('Listeden kaldır'),
+        trailing: rowActions ??
+            PopupMenuButton<String>(
+              onSelected: (value) {
+                if (value == 'remove') {
+                  _pairedService.remove(device.deviceId);
+                }
+              },
+              itemBuilder: (context) => const [
+                PopupMenuItem(
+                  value: 'remove',
+                  child: Text('Listeden kaldır'),
+                ),
+              ],
             ),
-          ],
-        ),
-        onTap: hasPendingReconnect ? null : () => _openRecentConnect(device),
+        onTap: pendingReconnect != null
+            ? null
+            : () => _openRecentConnect(device),
       ),
     );
   }
@@ -233,7 +241,7 @@ class _HomeScreenState extends State<HomeScreen> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               if (reconnect != null) ...[
-                _buildReconnectPromptCard(theme, reconnect),
+                _buildReconnectTopRow(theme, reconnect),
                 const SizedBox(height: 16),
               ],
               if (incoming != null) ...[
@@ -324,8 +332,10 @@ class _HomeScreenState extends State<HomeScreen> {
                     child: _deviceRowCard(
                       theme: theme,
                       device: device,
-                      hasPendingReconnect:
-                          reconnect?.fromDeviceId == device.deviceId,
+                      pendingReconnect:
+                          reconnect?.fromDeviceId == device.deviceId
+                              ? reconnect
+                              : null,
                     ),
                   ),
                 ),

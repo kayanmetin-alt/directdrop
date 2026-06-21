@@ -1,0 +1,13 @@
+{
+  "name": "directdrop-functions",
+  "description": "DirectDrop Firebase Cloud Functions — push bildirimleri",
+  "engines": {
+    "node": "20"
+  },
+  "main": "index.js",
+  "dependencies": {
+    "firebase-admin": "^13.0.2",
+    "firebase-functions": "^6.3.0"
+  },
+  "private": true
+}

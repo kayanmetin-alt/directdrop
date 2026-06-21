@@ -28,5 +28,7 @@
 	<string>MainMenu</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>DirectDrop, göndermek istediğiniz fotoğraf ve videoları seçebilmeniz için Fotoğraflar kütüphanesine erişir.</string>
 </dict>
 </plist>

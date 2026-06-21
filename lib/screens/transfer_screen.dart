@@ -74,10 +74,29 @@ class _TransferScreenState extends State<TransferScreen>
 
   void _onControllerChanged() {
     if (!mounted || _handledPeerLeft || _controller.userInitiatedLeave) return;
+
+    final peerLabel =
+        widget.peerDisplayName ?? _controller.peerDisplayName ?? 'Karşı cihaz';
+
     if (_controller.peerHasLeft) {
       _handledPeerLeft = true;
-      final peerLabel =
-          widget.peerDisplayName ?? _controller.peerDisplayName ?? 'Karşı cihaz';
+      unawaited(
+        SessionExitHelper.leaveAndGoHome(
+          controller: _controller,
+          peerDeviceId: widget.peerDeviceId ?? _controller.peerDeviceId,
+          context: context,
+          snackMessage: '$peerLabel bağlantıyı kapattı',
+          userInitiatedDisconnect: false,
+        ),
+      );
+      return;
+    }
+
+    if (_controller.hadSuccessfulConnection &&
+        !_controller.isConnected &&
+        !_controller.isReconnecting &&
+        _controller.connectionState == WebRtcConnectionState.failed) {
+      _handledPeerLeft = true;
       unawaited(
         SessionExitHelper.leaveAndGoHome(
           controller: _controller,

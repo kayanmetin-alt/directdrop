@@ -1,7 +1,7 @@
 name: directdrop
 description: Cross-platform P2P file transfer over the internet using Firebase signaling and WebRTC.
 publish_to: 'none'
-version: 1.0.43+44
+version: 1.2.2+13
 
 environment:
   sdk: '>=3.0.0 <4.0.0'
