@@ -27,9 +27,11 @@ end
 platform :ios do
   desc "App Store Connect'e IPA yükle (TestFlight / review)"
   lane :deploy do
-    ipa_files = Dir["../build/ios/ipa/*.ipa"]
+    project_root = File.expand_path("..", __dir__)
+    ipa_files = Dir[File.join(project_root, "build/ios/ipa/*.ipa")]
     UI.user_error!("IPA bulunamadı") if ipa_files.empty?
     ipa_path = ipa_files.first
+    UI.message("IPA yükleniyor: #{ipa_path}")
 
     api_key = app_store_connect_api_key(
       key_id: ENV["APPSTORE_KEY_ID"],
