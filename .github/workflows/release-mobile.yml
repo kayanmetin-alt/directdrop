@@ -117,6 +117,9 @@ jobs:
           PP_PATH=$RUNNER_TEMP/directdrop.mobileprovision
           echo "$IOS_DIST_CERT_P12_BASE64" | base64 -d > "$CERT_PATH"
           echo "$IOS_PROVISION_PROFILE_BASE64" | base64 -d > "$PP_PATH"
+          PROFILE_PLIST=$RUNNER_TEMP/profile.plist
+          security cms -D -i "$PP_PATH" > "$PROFILE_PLIST"
+          PROFILE_UUID=$(/usr/libexec/PlistBuddy -c 'Print UUID' "$PROFILE_PLIST")
           KEYCHAIN=$RUNNER_TEMP/app-signing.keychain-db
           security create-keychain -p "$IOS_DIST_CERT_PASSWORD" "$KEYCHAIN"
           security set-keychain-settings -lut 21600 "$KEYCHAIN"
@@ -124,7 +127,7 @@ jobs:
           security import "$CERT_PATH" -P "$IOS_DIST_CERT_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN"
           security list-keychain -d user -s "$KEYCHAIN"
           mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
-          cp "$PP_PATH" ~/Library/MobileDevice/Provisioning\ Profiles/
+          cp "$PP_PATH" ~/Library/MobileDevice/Provisioning\ Profiles/"$PROFILE_UUID".mobileprovision
 
       - run: flutter pub get
       - run: cd ios && pod install && cd ..
