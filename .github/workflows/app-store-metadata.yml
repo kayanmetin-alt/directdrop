@@ -1,0 +1,23 @@
+name: Upload App Store Metadata
+
+on:
+  workflow_dispatch:
+
+jobs:
+  upload-metadata:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Upload metadata and screenshots
+        env:
+          APPSTORE_KEY_ID: ${{ secrets.APPSTORE_KEY_ID }}
+          APPSTORE_ISSUER_ID: ${{ secrets.APPSTORE_ISSUER_ID }}
+          APPSTORE_PRIVATE_KEY: ${{ secrets.APPSTORE_PRIVATE_KEY }}
+        run: |
+          if [ -z "$APPSTORE_PRIVATE_KEY" ]; then
+            echo "App Store API secret'ları yok."
+            exit 1
+          fi
+          sudo gem install fastlane -NV
+          cd fastlane && fastlane ios metadata

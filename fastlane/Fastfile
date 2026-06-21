@@ -7,6 +7,34 @@ end
 
 default_platform(:android)
 
+# App Store Connect sometimes returns "No data" while Fastlane tries to
+# inspect first-version review attachments that do not exist yet. That should
+# not block metadata/screenshot uploads, so skip only this optional cleanup.
+begin
+  require "deliver/upload_metadata"
+
+  if defined?(::Deliver::UploadMetadata) && (
+    ::Deliver::UploadMetadata.instance_methods.include?(:review_attachment_file) ||
+    ::Deliver::UploadMetadata.private_instance_methods.include?(:review_attachment_file)
+  )
+    ::Deliver::UploadMetadata.class_eval do
+      alias_method :directdrop_original_review_attachment_file, :review_attachment_file unless method_defined?(:directdrop_original_review_attachment_file)
+
+      define_method(:review_attachment_file) do |version|
+        directdrop_original_review_attachment_file(version)
+      rescue => error
+        UI.important("Review attachment kontrolü atlandı: #{error.message}")
+      end
+
+      private :review_attachment_file
+    end
+  else
+    UI.important("Deliver review_attachment_file patch uygulanmadı; hedef metod bulunamadı.")
+  end
+rescue LoadError
+  UI.important("Deliver metadata patch yüklenemedi; Fastlane varsayılan akışla devam edecek.")
+end
+
 platform :android do
   desc "Release AAB derle (Flutter)"
   lane :build do
@@ -39,6 +67,19 @@ platform :android do
 end
 
 platform :ios do
+  private_lane :app_store_api_key_from_env do
+    UI.user_error!("APPSTORE_KEY_ID tanımlı değil") if ENV["APPSTORE_KEY_ID"].to_s.empty?
+    UI.user_error!("APPSTORE_ISSUER_ID tanımlı değil") if ENV["APPSTORE_ISSUER_ID"].to_s.empty?
+    UI.user_error!("APPSTORE_PRIVATE_KEY tanımlı değil") if ENV["APPSTORE_PRIVATE_KEY"].to_s.empty?
+
+    app_store_connect_api_key(
+      key_id: ENV["APPSTORE_KEY_ID"],
+      issuer_id: ENV["APPSTORE_ISSUER_ID"],
+      key_content: ENV["APPSTORE_PRIVATE_KEY"],
+      is_key_content_base64: false
+    )
+  end
+
   desc "Release IPA derle (Flutter)"
   lane :build do
     export_plist = File.join(project_root, "ios/ExportOptions.plist")
@@ -61,25 +102,34 @@ platform :ios do
     end
     UI.user_error!("IPA bulunamadı: #{ipa_dir}") if ipa_files.empty?
     ipa_path = ipa_files.first
-
-    UI.user_error!("APPSTORE_KEY_ID tanımlı değil") if ENV["APPSTORE_KEY_ID"].to_s.empty?
-    UI.user_error!("APPSTORE_ISSUER_ID tanımlı değil") if ENV["APPSTORE_ISSUER_ID"].to_s.empty?
-    UI.user_error!("APPSTORE_PRIVATE_KEY tanımlı değil") if ENV["APPSTORE_PRIVATE_KEY"].to_s.empty?
-
-    api_key = app_store_connect_api_key(
-      key_id: ENV["APPSTORE_KEY_ID"],
-      issuer_id: ENV["APPSTORE_ISSUER_ID"],
-      key_content: ENV["APPSTORE_PRIVATE_KEY"],
-      is_key_content_base64: false
-    )
+    UI.message("IPA yükleniyor: #{ipa_path}")
 
     upload_to_app_store(
-      api_key: api_key,
+      api_key: app_store_api_key_from_env,
       ipa: ipa_path,
       skip_metadata: true,
       skip_screenshots: true,
       precheck_include_in_app_purchases: false,
       submit_for_review: false
+    )
+  end
+
+  desc "App Store Connect metadata ve screenshot yükle"
+  lane :metadata do
+    upload_to_app_store(
+      api_key: app_store_api_key_from_env,
+      app_identifier: "com.directdrop.app",
+      app_version: "1.3.0",
+      metadata_path: "./metadata",
+      screenshots_path: "./screenshots",
+      skip_binary_upload: true,
+      skip_metadata: false,
+      skip_screenshots: false,
+      overwrite_screenshots: true,
+      submit_for_review: false,
+      precheck_include_in_app_purchases: false,
+      run_precheck_before_submit: false,
+      force: true
     )
   end
 end

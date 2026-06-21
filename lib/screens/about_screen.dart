@@ -80,7 +80,7 @@ class AboutScreen extends StatelessWidget {
             ListTile(
               leading: const Icon(Icons.mail_outline),
               title: const Text('Destek'),
-              subtitle: Text(LegalUrls.supportEmail),
+              subtitle: const Text(LegalUrls.supportEmail),
               onTap: () async {
                 try {
                   await _openSupportEmail();

@@ -1,0 +1,1 @@
+DirectDrop’un ilk App Store sürümü: QR kodla eşleşme, cihazdan cihaza dosya aktarımı, transfer geçmişi ve bildirim destekli bağlantı istekleri.
