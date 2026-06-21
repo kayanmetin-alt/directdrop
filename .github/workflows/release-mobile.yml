@@ -38,9 +38,6 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Disable Flutter Swift Package Manager
-        run: flutter config --no-enable-swift-package-manager
-
       - name: Read version
         id: version
         run: |
@@ -100,6 +97,9 @@ jobs:
         with:
           channel: stable
           cache: true
+
+      - name: Disable Flutter Swift Package Manager
+        run: flutter config --no-enable-swift-package-manager
 
       - name: Read version
         id: version
