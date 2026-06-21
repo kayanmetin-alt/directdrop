@@ -89,7 +89,7 @@ jobs:
     if: >-
       (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
       (github.event_name == 'workflow_dispatch' && inputs.deploy_ios)
-    runs-on: macos-26-arm64
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
 
