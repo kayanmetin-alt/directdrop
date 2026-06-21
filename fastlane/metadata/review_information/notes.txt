@@ -1,0 +1,1 @@
+Demo hesabı gerekmez. Uygulama QR kod veya oda kodu ile cihazlar arasında dosya aktarımı sağlar.
