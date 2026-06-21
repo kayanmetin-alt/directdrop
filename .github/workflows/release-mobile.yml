@@ -141,6 +141,7 @@ jobs:
         with:
           name: DirectDrop-${{ steps.version.outputs.name }}-ios
           path: build/ios/ipa/*.ipa
+          if-no-files-found: error
 
       - name: Deploy to App Store Connect
         env:
