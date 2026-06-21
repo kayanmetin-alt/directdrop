@@ -16,7 +16,10 @@ class SendFilePickerService {
   static const MethodChannel _mediaChannel =
       MethodChannel('com.directdrop.app/media_picker');
 
-  static Future<List<String>?> pickWithSourceChoice(BuildContext context) async {
+  static Future<List<String>?> pickWithSourceChoice(
+    BuildContext context, {
+    bool preferJpeg = false,
+  }) async {
     if (!Platform.isIOS && !Platform.isMacOS && !Platform.isAndroid) {
       return _pickFromDeviceStorage();
     }
@@ -26,7 +29,7 @@ class SendFilePickerService {
 
     switch (source) {
       case SendFileSource.photosLibrary:
-        return _pickFromPhotosLibrary();
+        return _pickFromPhotosLibrary(preferJpeg: preferJpeg);
       case SendFileSource.deviceStorage:
         return _pickFromDeviceStorage();
     }
@@ -93,10 +96,13 @@ class SendFilePickerService {
     );
   }
 
-  static Future<List<String>?> _pickFromPhotosLibrary() async {
+  static Future<List<String>?> _pickFromPhotosLibrary({
+    bool preferJpeg = false,
+  }) async {
     try {
       final result = await _mediaChannel.invokeMethod<List<dynamic>>(
         'pickFromPhotos',
+        {'preferJpeg': preferJpeg},
       );
       if (result == null || result.isEmpty) return null;
       return result.whereType<String>().where((path) => path.isNotEmpty).toList();

@@ -1,0 +1,13 @@
+# fastlane match — iOS App Store imzalama sertifikaları
+# Kurulum: fastlane/README.md → "iOS imzalama (match)"
+
+git_url("git@github.com:KULLANICI/directdrop-certificates.git")
+storage_mode("git")
+type("appstore")
+
+app_identifier(["com.directdrop.app"])
+username(ENV["APPLE_ID"] || "apple-id@example.com")
+team_id("ZX94LAT88X")
+
+# İlk kurulumda readonly false; CI ve sonraki kullanımda true
+# readonly(true)

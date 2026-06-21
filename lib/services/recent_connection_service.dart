@@ -926,6 +926,7 @@ class RecentConnectionService extends ChangeNotifier {
     controller.bindPeer(
       deviceId: peer.deviceId,
       displayName: peer.displayName,
+      platform: peer.platform,
     );
 
     // Controller'ı hemen döndür — UI ListenableBuilder ile bağlantıyı izler.

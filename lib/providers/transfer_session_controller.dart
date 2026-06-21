@@ -8,7 +8,9 @@ import '../models/paired_device.dart';
 import '../models/room.dart';
 import '../models/signaling_message.dart';
 import '../models/transfer_file.dart';
+import '../utils/photo_export_compatibility.dart';
 import '../utils/room_code_generator.dart';
+import '../services/photo_export_service.dart';
 import '../services/device_identity_service.dart';
 import '../services/device_registry_service.dart';
 import '../services/file_transfer_service.dart';
@@ -58,6 +60,7 @@ class TransferSessionController extends ChangeNotifier {
 
   String? peerDeviceId;
   String? peerDisplayName;
+  String? peerPlatform;
   final Set<String> _persistedTransferIds = {};
 
   RoomSession? get session => _session;
@@ -76,12 +79,74 @@ class TransferSessionController extends ChangeNotifier {
   bool get isPaired => _session?.remotePeerId != null;
   FileTransferService? get fileTransfer => _fileTransfer;
 
-  void bindPeer({required String deviceId, required String displayName}) {
+  void bindPeer({
+    required String deviceId,
+    required String displayName,
+    String? platform,
+  }) {
     peerDeviceId = deviceId;
     peerDisplayName = displayName;
+    if (platform != null && platform.isNotEmpty && platform != 'unknown') {
+      peerPlatform = platform;
+    }
     if (_session != null && !_disposed) {
       unawaited(_armPeerDepartureSignals());
     }
+  }
+
+  Future<bool> shouldPreferJpegForPhotos() async {
+    final peer = await resolvePeerPlatform();
+    return PhotoExportCompatibility.prefersJpeg(
+      localPlatform: DeviceIdentityService.instance.platformLabel,
+      peerPlatform: peer,
+    );
+  }
+
+  Future<String?> resolvePeerPlatform() async {
+    if (peerPlatform != null &&
+        peerPlatform!.isNotEmpty &&
+        peerPlatform != 'unknown') {
+      return peerPlatform;
+    }
+
+    await _ensurePeerInfo();
+
+    if (peerDeviceId != null) {
+      await PairedDevicesService.instance.load();
+      final paired =
+          PairedDevicesService.instance.findByDeviceId(peerDeviceId!);
+      if (paired != null &&
+          paired.platform.isNotEmpty &&
+          paired.platform != 'unknown') {
+        peerPlatform = paired.platform;
+        return peerPlatform;
+      }
+
+      final device = await _deviceRegistry.readDevice(peerDeviceId!);
+      final registryPlatform = device?['platform'] as String?;
+      if (registryPlatform != null &&
+          registryPlatform.isNotEmpty &&
+          registryPlatform != 'unknown') {
+        peerPlatform = registryPlatform;
+        return peerPlatform;
+      }
+    }
+
+    final session = _session;
+    if (session != null) {
+      final roomPlatform = session.role == PeerRole.host
+          ? await _signaling.getGuestDevicePlatform(session.roomCode)
+          : await _signaling.getHostDevicePlatform(session.roomCode);
+      if (roomPlatform != null &&
+          roomPlatform.isNotEmpty &&
+          roomPlatform != 'unknown') {
+        peerPlatform = roomPlatform;
+        return peerPlatform;
+      }
+    }
+
+    peerPlatform = _guessPeerPlatform(peerDisplayName);
+    return peerPlatform;
   }
 
   Future<void> acceptIncomingFile(String fileId) async {
@@ -141,6 +206,7 @@ class TransferSessionController extends ChangeNotifier {
         roomCode: roomCode,
         hostPeerId: peerId,
         deviceName: deviceName,
+        devicePlatform: DeviceIdentityService.instance.platformLabel,
         persistentDeviceId: persistentId,
       );
 
@@ -236,6 +302,7 @@ class TransferSessionController extends ChangeNotifier {
         roomCode: normalizedCode,
         guestPeerId: peerId,
         deviceName: deviceName,
+        devicePlatform: DeviceIdentityService.instance.platformLabel,
         persistentDeviceId: persistentId,
       );
 
@@ -286,7 +353,11 @@ class TransferSessionController extends ChangeNotifier {
   }) async {
     _setBusy(true);
     try {
-      bindPeer(deviceId: peer.deviceId, displayName: peer.displayName);
+      bindPeer(
+        deviceId: peer.deviceId,
+        displayName: peer.displayName,
+        platform: peer.platform,
+      );
       final peerId = _uuid.v4();
       final resolvedRoomCode = roomCode ?? RoomCodeGenerator.generate();
       final persistentId = await _persistentDeviceId();
@@ -300,6 +371,7 @@ class TransferSessionController extends ChangeNotifier {
         roomCode: resolvedRoomCode,
         hostPeerId: peerId,
         deviceName: deviceName,
+        devicePlatform: DeviceIdentityService.instance.platformLabel,
         persistentDeviceId: persistentId,
       );
       await FirebaseAuthService.instance.requireUid();
@@ -399,21 +471,32 @@ class TransferSessionController extends ChangeNotifier {
     final myId = await _persistentDeviceId();
     String? remoteId;
     String? remoteName;
+    String? remotePlatform;
 
     if (session.role == PeerRole.host) {
       remoteId = await _signaling.getGuestPersistentId(session.roomCode);
       remoteName = await _signaling.getGuestDeviceName(session.roomCode);
+      remotePlatform =
+          await _signaling.getGuestDevicePlatform(session.roomCode);
     } else {
       remoteId = await _signaling.getHostPersistentId(session.roomCode);
       remoteName = await _signaling.getHostDeviceName(session.roomCode);
+      remotePlatform =
+          await _signaling.getHostDevicePlatform(session.roomCode);
     }
 
     if (remoteId == null || remoteId.isEmpty || remoteId == myId) return;
 
+    final platform = (remotePlatform != null &&
+            remotePlatform.isNotEmpty &&
+            remotePlatform != 'unknown')
+        ? remotePlatform
+        : _guessPeerPlatform(remoteName);
+
     await PairedDevicesService.instance.savePair(
       deviceId: remoteId,
       displayName: remoteName ?? 'Cihaz',
-      platform: _guessPeerPlatform(remoteName),
+      platform: platform,
     );
     _pairSaved = true;
   }
@@ -497,6 +580,16 @@ class TransferSessionController extends ChangeNotifier {
 
     peerDeviceId = remoteId;
     peerDisplayName = remoteName ?? 'Cihaz';
+    if (peerPlatform == null || peerPlatform == 'unknown') {
+      final roomPlatform = _session!.role == PeerRole.host
+          ? await _signaling.getGuestDevicePlatform(_session!.roomCode)
+          : await _signaling.getHostDevicePlatform(_session!.roomCode);
+      if (roomPlatform != null &&
+          roomPlatform.isNotEmpty &&
+          roomPlatform != 'unknown') {
+        peerPlatform = roomPlatform;
+      }
+    }
     await _armPeerDepartureSignals();
   }
 
@@ -769,7 +862,12 @@ class TransferSessionController extends ChangeNotifier {
     }
 
     await _fileTransfer!.ensurePeerReady();
-    await _fileTransfer!.sendFiles(paths);
+    final preferJpeg = await shouldPreferJpegForPhotos();
+    final prepared = await PhotoExportService.preparePathsForTransfer(
+      paths,
+      preferJpeg: preferJpeg,
+    );
+    await _fileTransfer!.sendFiles(prepared);
     notifyListeners();
   }
 

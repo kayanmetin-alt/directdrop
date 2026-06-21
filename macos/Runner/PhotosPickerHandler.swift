@@ -1,7 +1,51 @@
 import AppKit
 import FlutterMacOS
+import ImageIO
 import PhotosUI
 import UniformTypeIdentifiers
+
+enum HeicJpegConverter {
+  private static let heicExtensions: Set<String> = ["heic", "heif"]
+
+  static func isHeicFile(_ url: URL) -> Bool {
+    heicExtensions.contains(url.pathExtension.lowercased())
+  }
+
+  static func convertPaths(_ paths: [String]) -> [String] {
+    paths.map { path in
+      let url = URL(fileURLWithPath: path)
+      guard isHeicFile(url) else { return path }
+      return convertFile(at: url)?.path ?? path
+    }
+  }
+
+  static func convertFile(at source: URL) -> URL? {
+    guard let sourceImage = CGImageSourceCreateWithURL(source as CFURL, nil),
+          let cgImage = CGImageSourceCreateImageAtIndex(sourceImage, 0, nil)
+    else {
+      return nil
+    }
+
+    let destination = source.deletingPathExtension().appendingPathExtension("jpg")
+    if FileManager.default.fileExists(atPath: destination.path) {
+      try? FileManager.default.removeItem(at: destination)
+    }
+
+    guard let destRef = CGImageDestinationCreateWithURL(
+      destination as CFURL,
+      UTType.jpeg.identifier as CFString,
+      1,
+      nil
+    ) else {
+      return nil
+    }
+
+    let options = [kCGImageDestinationLossyCompressionQuality: 0.92] as CFDictionary
+    CGImageDestinationAddImage(destRef, cgImage, options)
+    guard CGImageDestinationFinalize(destRef) else { return nil }
+    return destination
+  }
+}
 
 /// Fotoğraflar kütüphanesinden görsel ve video seçimi (PHPicker, macOS 13+).
 @available(macOS 13.0, *)
@@ -10,17 +54,23 @@ final class PhotosPickerHandler: NSObject, PHPickerViewControllerDelegate {
 
   private var pendingResult: FlutterResult?
   private weak var presentingController: NSViewController?
+  private var preferJpegExport = false
 
   private override init() {
     super.init()
   }
 
-  func pick(from controller: NSViewController, result: @escaping FlutterResult) {
+  func pick(
+    from controller: NSViewController,
+    preferJpeg: Bool,
+    result: @escaping FlutterResult
+  ) {
     guard pendingResult == nil else {
       result(FlutterError(code: "busy", message: "Seçim zaten açık.", details: nil))
       return
     }
 
+    preferJpegExport = preferJpeg
     pendingResult = result
 
     var config = PHPickerConfiguration(photoLibrary: .shared())
@@ -45,6 +95,7 @@ final class PhotosPickerHandler: NSObject, PHPickerViewControllerDelegate {
     guard let result = pendingResult else { return }
     pendingResult = nil
     presentingController = nil
+    preferJpegExport = false
 
     if results.isEmpty {
       result(nil)
@@ -96,8 +147,10 @@ final class PhotosPickerHandler: NSObject, PHPickerViewControllerDelegate {
     if Self.videoTypes.contains(where: { provider.hasItemConformingToTypeIdentifier($0) }) {
       return Self.videoTypes.first { provider.hasItemConformingToTypeIdentifier($0) }
     }
-    if Self.imageTypes.contains(where: { provider.hasItemConformingToTypeIdentifier($0) }) {
-      return Self.imageTypes.first { provider.hasItemConformingToTypeIdentifier($0) }
+    if Self.imageTypes(preferJpeg: preferJpegExport).contains(where: { provider.hasItemConformingToTypeIdentifier($0) }) {
+      return Self.imageTypes(preferJpeg: preferJpegExport).first {
+        provider.hasItemConformingToTypeIdentifier($0)
+      }
     }
     return UTType.data.identifier
   }
@@ -111,15 +164,28 @@ final class PhotosPickerHandler: NSObject, PHPickerViewControllerDelegate {
     "com.apple.quicktime-movie",
   ]
 
-  private static let imageTypes: [String] = [
-    UTType.heic.identifier,
-    UTType.jpeg.identifier,
-    UTType.png.identifier,
-    UTType.tiff.identifier,
-    UTType.image.identifier,
-    "public.heic",
-    "public.jpeg",
-  ]
+  private static func imageTypes(preferJpeg: Bool) -> [String] {
+    if preferJpeg {
+      return [
+        UTType.jpeg.identifier,
+        UTType.heic.identifier,
+        UTType.png.identifier,
+        UTType.tiff.identifier,
+        UTType.image.identifier,
+        "public.jpeg",
+        "public.heic",
+      ]
+    }
+    return [
+      UTType.heic.identifier,
+      UTType.jpeg.identifier,
+      UTType.png.identifier,
+      UTType.tiff.identifier,
+      UTType.image.identifier,
+      "public.heic",
+      "public.jpeg",
+    ]
+  }
 
   private func copyLoadedFile(
     from url: URL,
@@ -136,6 +202,12 @@ final class PhotosPickerHandler: NSObject, PHPickerViewControllerDelegate {
         try FileManager.default.removeItem(at: output)
       }
       try FileManager.default.copyItem(at: url, to: output)
+      if preferJpegExport, HeicJpegConverter.isHeicFile(output),
+         let jpeg = HeicJpegConverter.convertFile(at: output)
+      {
+        try? FileManager.default.removeItem(at: output)
+        return jpeg
+      }
       return output
     } catch {
       debugPrint("PhotosPicker: copy failed \(error)")
@@ -175,12 +247,41 @@ enum MediaPickerChannel {
       switch call.method {
       case "pickFromPhotos":
         if #available(macOS 13.0, *) {
-          PhotosPickerHandler.shared.pick(from: controller, result: result)
+          let args = call.arguments as? [String: Any]
+          let preferJpeg = args?["preferJpeg"] as? Bool ?? false
+          PhotosPickerHandler.shared.pick(
+            from: controller,
+            preferJpeg: preferJpeg,
+            result: result
+          )
         } else {
           result(FlutterError(
             code: "unsupported",
             message: "Fotoğraflar seçici macOS 13 veya üzeri gerektirir.",
             details: nil))
+        }
+      case "convertHeicToJpeg":
+        guard #available(macOS 13.0, *) else {
+          result(FlutterError(
+            code: "unsupported",
+            message: "JPEG dönüşümü macOS 13 veya üzeri gerektirir.",
+            details: nil))
+          return
+        }
+        guard let args = call.arguments as? [String: Any],
+              let paths = args["paths"] as? [String]
+        else {
+          result(FlutterError(
+            code: "invalid_args",
+            message: "paths gerekli.",
+            details: nil))
+          return
+        }
+        DispatchQueue.global(qos: .userInitiated).async {
+          let converted = HeicJpegConverter.convertPaths(paths)
+          DispatchQueue.main.async {
+            result(converted)
+          }
         }
       default:
         result(FlutterMethodNotImplemented)

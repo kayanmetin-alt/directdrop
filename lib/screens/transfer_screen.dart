@@ -26,12 +26,14 @@ class TransferScreen extends StatefulWidget {
     this.incomingFromName,
     this.peerDeviceId,
     this.peerDisplayName,
+    this.peerPlatform,
   });
 
   final TransferSessionController controller;
   final String? incomingFromName;
   final String? peerDeviceId;
   final String? peerDisplayName;
+  final String? peerPlatform;
 
   @override
   State<TransferScreen> createState() => _TransferScreenState();
@@ -56,6 +58,7 @@ class _TransferScreenState extends State<TransferScreen>
       _controller.bindPeer(
         deviceId: widget.peerDeviceId!,
         displayName: widget.peerDisplayName!,
+        platform: widget.peerPlatform,
       );
     }
     _historyService.load();
@@ -170,7 +173,12 @@ class _TransferScreenState extends State<TransferScreen>
       await _activateAppWindow();
       if (!mounted) return;
 
-      final paths = await SendFilePickerService.pickWithSourceChoice(context);
+      final preferJpeg = await _controller.shouldPreferJpegForPhotos();
+      if (!mounted) return;
+      final paths = await SendFilePickerService.pickWithSourceChoice(
+        context,
+        preferJpeg: preferJpeg,
+      );
 
       if (paths == null || paths.isEmpty) {
         return;

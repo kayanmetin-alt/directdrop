@@ -5,14 +5,13 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 
 import '../models/reconnect_request.dart';
-import '../models/paired_device.dart';
 import '../services/paired_devices_service.dart';
 import '../services/recent_connection_service.dart';
 import 'host_screen.dart';
 import 'join_screen.dart';
-import 'recent_connect_screen.dart';
 import '../widgets/download_location_settings.dart';
 import '../widgets/my_device_qr_card.dart';
+import '../widgets/recent_paired_devices_card.dart';
 import '../widgets/app_version_label.dart';
 import 'about_screen.dart';
 import 'incoming_reconnect_screen.dart';
@@ -46,33 +45,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _onChanged() {
     if (mounted) setState(() {});
-  }
-
-  void _openRecentConnect(PairedDevice peer, {bool autoAcceptInvite = false}) {
-    if (!autoAcceptInvite) {
-      _recentConnect.clearIncomingInvite();
-    }
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => RecentConnectScreen(
-          peer: peer,
-          autoAcceptInvite: autoAcceptInvite,
-        ),
-      ),
-    );
-  }
-
-  Future<void> _approveReconnect(ReconnectRequest request) async {
-    _recentConnect.dismissIncomingReconnectUi(request);
-    if (!mounted) return;
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => IncomingReconnectScreen(
-          request: request,
-          autoApprove: true,
-        ),
-      ),
-    );
   }
 
   void _rejectReconnect(ReconnectRequest request) {
@@ -120,101 +92,22 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget? _reconnectRowActions(
-    ThemeData theme,
-    ReconnectRequest? pendingReconnect,
-  ) {
-    if (pendingReconnect == null) return null;
-
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        IconButton(
-          icon: const Icon(Icons.check_circle_outline),
-          color: theme.colorScheme.primary,
-          tooltip: 'Onayla',
-          onPressed: () => _approveReconnect(pendingReconnect),
+  Future<void> _approveReconnect(ReconnectRequest request) async {
+    _recentConnect.dismissIncomingReconnectUi(request);
+    if (!mounted) return;
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => IncomingReconnectScreen(
+          request: request,
+          autoApprove: true,
         ),
-        IconButton(
-          icon: const Icon(Icons.cancel_outlined),
-          color: theme.colorScheme.error,
-          tooltip: 'Reddet',
-          onPressed: () => _rejectReconnect(pendingReconnect),
-        ),
-      ],
-    );
-  }
-
-  Widget _deviceRowCard({
-    required ThemeData theme,
-    required PairedDevice device,
-    required ReconnectRequest? pendingReconnect,
-  }) {
-    final rowActions = _reconnectRowActions(theme, pendingReconnect);
-
-    return Card(
-      color: pendingReconnect != null
-          ? theme.colorScheme.secondaryContainer.withValues(alpha: 0.35)
-          : null,
-      child: ListTile(
-        leading: Icon(
-          _platformIcon(device.platform),
-          color: theme.colorScheme.primary,
-        ),
-        title: Text(device.displayName),
-        subtitle: Text(
-          pendingReconnect != null
-              ? 'Bağlantı isteği bekliyor'
-              : 'Son: ${_formatLastSeen(device.lastConnectedAt)}',
-        ),
-        trailing: rowActions ??
-            PopupMenuButton<String>(
-              onSelected: (value) {
-                if (value == 'remove') {
-                  _pairedService.remove(device.deviceId);
-                }
-              },
-              itemBuilder: (context) => const [
-                PopupMenuItem(
-                  value: 'remove',
-                  child: Text('Listeden kaldır'),
-                ),
-              ],
-            ),
-        onTap: pendingReconnect != null
-            ? null
-            : () => _openRecentConnect(device),
       ),
     );
-  }
-
-  IconData _platformIcon(String platform) {
-    switch (platform) {
-      case 'ios':
-        return Icons.phone_iphone;
-      case 'macos':
-        return Icons.laptop_mac;
-      case 'windows':
-        return Icons.desktop_windows;
-      case 'android':
-        return Icons.phone_android;
-      default:
-        return Icons.devices;
-    }
-  }
-
-  String _formatLastSeen(DateTime date) {
-    final now = DateTime.now();
-    if (now.difference(date).inDays == 0) {
-      return 'bugün ${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
-    }
-    return '${date.day}.${date.month}.${date.year}';
   }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final recent = _pairedService.devices;
     final incoming = _recentConnect.incomingInvitePeer;
     final reconnect = _recentConnect.incomingReconnectRequest;
 
@@ -309,48 +202,11 @@ class _HomeScreenState extends State<HomeScreen> {
                 label: const Text('Koda Katıl'),
               ),
               const SizedBox(height: 16),
-              const DownloadLocationSettings(),
+              const DownloadLocationSettings(collapsible: true),
               const SizedBox(height: 16),
               const MyDeviceQrCard(),
               const SizedBox(height: 16),
-              Text(
-                'Son eşleşmeler',
-                style: theme.textTheme.titleMedium,
-              ),
-              const SizedBox(height: 4),
-              Text(
-                'Listeden dokunun; karşı cihazda onay isteği görünür.',
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: theme.colorScheme.onSurfaceVariant,
-                ),
-              ),
-              const SizedBox(height: 8),
-              if (recent.isEmpty)
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 24),
-                  child: Text(
-                    'Henüz kayıtlı eşleşme yok.\n'
-                    'Yukarıdaki QR kodunuzu okutarak veya Koda Katıl ile bağlanın.',
-                    textAlign: TextAlign.center,
-                    style: theme.textTheme.bodyMedium?.copyWith(
-                      color: theme.colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                )
-              else
-                ...recent.map(
-                  (device) => Padding(
-                    padding: const EdgeInsets.only(bottom: 8),
-                    child: _deviceRowCard(
-                      theme: theme,
-                      device: device,
-                      pendingReconnect:
-                          reconnect?.fromDeviceId == device.deviceId
-                              ? reconnect
-                              : null,
-                    ),
-                  ),
-                ),
+              const RecentPairedDevicesCard(),
               const SizedBox(height: 16),
               const Center(child: AppVersionLabel()),
             ],

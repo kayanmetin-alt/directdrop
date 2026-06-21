@@ -291,6 +291,7 @@ class _RecentConnectScreenState extends State<RecentConnectScreen> {
               controller: controller,
               peerDeviceId: widget.peer.deviceId,
               peerDisplayName: widget.peer.displayName,
+              peerPlatform: widget.peer.platform,
             ),
           );
         }

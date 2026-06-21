@@ -30,6 +30,7 @@ class FirebaseSignalingService {
     required String roomCode,
     required String hostPeerId,
     required String deviceName,
+    required String devicePlatform,
     required String persistentDeviceId,
   }) async {
     final hostAuthUid = await FirebaseAuthService.instance.requireUid();
@@ -50,6 +51,7 @@ class FirebaseSignalingService {
           'createdAt': ServerValue.timestamp,
           'hostPeerId': hostPeerId,
           'hostDeviceName': deviceName,
+          'hostDevicePlatform': devicePlatform,
           'hostPersistentId': persistentDeviceId,
           'hostAuthUid': hostAuthUid,
           'allowedUids': {hostAuthUid: true},
@@ -138,6 +140,7 @@ class FirebaseSignalingService {
     required String roomCode,
     required String guestPeerId,
     required String deviceName,
+    required String devicePlatform,
     required String persistentDeviceId,
   }) async {
     final guestAuthUid = await FirebaseAuthService.instance.requireUid();
@@ -166,6 +169,7 @@ class FirebaseSignalingService {
       await _roomRef!.update({
         'guestPeerId': guestPeerId,
         'guestDeviceName': deviceName,
+        'guestDevicePlatform': devicePlatform,
         'guestPersistentId': persistentDeviceId,
         'guestAuthUid': guestAuthUid,
         'allowedUids': allowedUids,
@@ -204,6 +208,18 @@ class FirebaseSignalingService {
   Future<String?> getGuestDeviceName(String roomCode) async {
     final snapshot =
         await _rooms.child(roomCode).child('guestDeviceName').get();
+    return snapshot.value as String?;
+  }
+
+  Future<String?> getHostDevicePlatform(String roomCode) async {
+    final snapshot =
+        await _rooms.child(roomCode).child('hostDevicePlatform').get();
+    return snapshot.value as String?;
+  }
+
+  Future<String?> getGuestDevicePlatform(String roomCode) async {
+    final snapshot =
+        await _rooms.child(roomCode).child('guestDevicePlatform').get();
     return snapshot.value as String?;
   }
 

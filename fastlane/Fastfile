@@ -1,15 +1,29 @@
+# DirectDrop Fastlane
+# Kullanım: cd fastlane && bundle exec fastlane [platform] [lane]
+
+def project_root
+  File.expand_path("..", __dir__)
+end
+
 default_platform(:android)
 
 platform :android do
+  desc "Release AAB derle (Flutter)"
+  lane :build do
+    Dir.chdir(project_root) do
+      sh("flutter pub get")
+      sh("flutter build appbundle --release")
+    end
+  end
+
   desc "Play Store internal track'e AAB yükle"
   lane :deploy do
-    aab_path = "../build/app/outputs/bundle/release/app-release.aab"
-    unless File.exist?(aab_path)
-      UI.user_error!("AAB bulunamadı: #{aab_path}. Önce flutter build appbundle çalıştırın.")
-    end
+    aab_path = File.join(project_root, "build/app/outputs/bundle/release/app-release.aab")
+    build unless File.exist?(aab_path)
 
     json_key = ENV["PLAY_STORE_JSON_PATH"]
-    UI.user_error!("PLAY_STORE_JSON_PATH tanımlı değil") if json_key.nil? || json_key.empty?
+    UI.user_error!("PLAY_STORE_JSON_PATH tanımlı değil (.env veya export)") if json_key.nil? || json_key.empty?
+    UI.user_error!("JSON dosyası yok: #{json_key}") unless File.exist?(json_key)
 
     upload_to_play_store(
       track: ENV.fetch("PLAY_STORE_TRACK", "internal"),
@@ -25,11 +39,32 @@ platform :android do
 end
 
 platform :ios do
+  desc "Release IPA derle (Flutter)"
+  lane :build do
+    export_plist = File.join(project_root, "ios/ExportOptions.plist")
+    UI.user_error!("ExportOptions.plist bulunamadı") unless File.exist?(export_plist)
+
+    Dir.chdir(project_root) do
+      sh("flutter pub get")
+      sh("cd ios && pod install")
+      sh("flutter build ipa --release --export-options-plist=ios/ExportOptions.plist")
+    end
+  end
+
   desc "App Store Connect'e IPA yükle (TestFlight / review)"
   lane :deploy do
-    ipa_files = Dir["../build/ios/ipa/*.ipa"]
-    UI.user_error!("IPA bulunamadı") if ipa_files.empty?
+    ipa_dir = File.join(project_root, "build/ios/ipa")
+    ipa_files = Dir[File.join(ipa_dir, "*.ipa")]
+    if ipa_files.empty?
+      build
+      ipa_files = Dir[File.join(ipa_dir, "*.ipa")]
+    end
+    UI.user_error!("IPA bulunamadı: #{ipa_dir}") if ipa_files.empty?
     ipa_path = ipa_files.first
+
+    UI.user_error!("APPSTORE_KEY_ID tanımlı değil") if ENV["APPSTORE_KEY_ID"].to_s.empty?
+    UI.user_error!("APPSTORE_ISSUER_ID tanımlı değil") if ENV["APPSTORE_ISSUER_ID"].to_s.empty?
+    UI.user_error!("APPSTORE_PRIVATE_KEY tanımlı değil") if ENV["APPSTORE_PRIVATE_KEY"].to_s.empty?
 
     api_key = app_store_connect_api_key(
       key_id: ENV["APPSTORE_KEY_ID"],
