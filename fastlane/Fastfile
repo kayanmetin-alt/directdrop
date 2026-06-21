@@ -6,7 +6,10 @@ default_platform(:android)
 begin
   require "deliver/upload_metadata"
 
-  if defined?(::Deliver::UploadMetadata) && ::Deliver::UploadMetadata.instance_methods.include?(:review_attachment_file)
+  if defined?(::Deliver::UploadMetadata) && (
+    ::Deliver::UploadMetadata.instance_methods.include?(:review_attachment_file) ||
+    ::Deliver::UploadMetadata.private_instance_methods.include?(:review_attachment_file)
+  )
     ::Deliver::UploadMetadata.class_eval do
       alias_method :directdrop_original_review_attachment_file, :review_attachment_file unless method_defined?(:directdrop_original_review_attachment_file)
 
@@ -15,6 +18,8 @@ begin
       rescue => error
         UI.important("Review attachment kontrolü atlandı: #{error.message}")
       end
+
+      private :review_attachment_file
     end
   else
     UI.important("Deliver review_attachment_file patch uygulanmadı; hedef metod bulunamadı.")
