@@ -14,15 +14,30 @@ class AppVersionLabel extends StatefulWidget {
   State<AppVersionLabel> createState() => _AppVersionLabelState();
 }
 
-class _AppVersionLabelState extends State<AppVersionLabel> {
+class _AppVersionLabelState extends State<AppVersionLabel>
+    with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
-    _load();
+    WidgetsBinding.instance.addObserver(this);
+    _load(force: true);
   }
 
-  Future<void> _load() async {
-    await AppVersionService.instance.load();
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _load(force: true);
+    }
+  }
+
+  Future<void> _load({bool force = false}) async {
+    await AppVersionService.instance.load(forceReload: force);
     if (mounted) setState(() {});
   }
 

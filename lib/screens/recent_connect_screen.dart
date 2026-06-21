@@ -6,8 +6,11 @@ import 'package:provider/provider.dart';
 import '../models/paired_device.dart';
 import '../providers/transfer_session_controller.dart';
 import '../services/active_session_registry.dart';
+import '../services/paired_auto_connect_service.dart';
 import '../services/recent_connection_service.dart';
+import '../utils/session_exit_helper.dart';
 import '../utils/user_facing_error.dart';
+import '../widgets/connect_waiting_panel.dart';
 import 'host_screen.dart';
 import 'join_screen.dart';
 import 'transfer_screen.dart';
@@ -41,6 +44,8 @@ class _RecentConnectScreenState extends State<RecentConnectScreen> {
   }
 
   Future<void> _connect() async {
+    RecentConnectionService.instance.abandonPeerConnection(widget.peer.deviceId);
+
     setState(() {
       _error = null;
       _statusMessage = widget.autoAcceptInvite
@@ -85,6 +90,22 @@ class _RecentConnectScreenState extends State<RecentConnectScreen> {
     }
   }
 
+  Future<void> _cancelAndGoHome() async {
+    final controller = _controller;
+    if (controller != null && !controller.isDisposed) {
+      await SessionExitHelper.leaveAndGoHome(
+        controller: controller,
+        peerDeviceId: widget.peer.deviceId,
+        context: context,
+      );
+      return;
+    }
+    RecentConnectionService.instance.abandonPeerConnection(widget.peer.deviceId);
+    await PairedAutoConnectService.instance.leavePeer(widget.peer.deviceId);
+    if (!mounted) return;
+    Navigator.of(context).popUntil((route) => route.isFirst);
+  }
+
   @override
   void dispose() {
     RecentConnectionService.instance.clearAutoConnectActive();
@@ -92,7 +113,7 @@ class _RecentConnectScreenState extends State<RecentConnectScreen> {
     if (controller != null) {
       ActiveSessionRegistry.instance.unregister(controller);
       if (_ownsController && !controller.isDisposed) {
-        unawaited(controller.disconnect());
+        unawaited(controller.disconnect(userInitiated: true));
       }
     }
     super.dispose();
@@ -158,35 +179,47 @@ class _RecentConnectScreenState extends State<RecentConnectScreen> {
     final controller = _controller;
     if (controller == null) {
       return Scaffold(
-        appBar: AppBar(title: Text(widget.peer.displayName)),
-        body: SafeArea(
-          child: Center(
-            child: Padding(
-              padding: const EdgeInsets.all(24),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const CircularProgressIndicator(),
-                  const SizedBox(height: 24),
-                  Text(
-                    widget.autoAcceptInvite
-                        ? '${widget.peer.displayName} ile bağlanılıyor…'
-                        : '${widget.peer.displayName} ile bağlanılıyor…',
-                    textAlign: TextAlign.center,
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                  if (_statusMessage != null) ...[
-                    const SizedBox(height: 12),
-                    Text(
-                      _statusMessage!,
-                      textAlign: TextAlign.center,
-                      style: Theme.of(context).textTheme.bodyMedium,
-                    ),
-                  ],
-                ],
-              ),
+        appBar: AppBar(
+          title: Text(widget.peer.displayName),
+          actions: [
+            IconButton(
+              onPressed: _cancelAndGoHome,
+              icon: const Icon(Icons.close),
+              tooltip: 'İptal',
             ),
-          ),
+          ],
+        ),
+        body: SafeArea(
+          child: widget.autoAcceptInvite
+              ? Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const CircularProgressIndicator(),
+                        const SizedBox(height: 24),
+                        Text(
+                          '${widget.peer.displayName} ile bağlanılıyor…',
+                          textAlign: TextAlign.center,
+                          style: Theme.of(context).textTheme.titleMedium,
+                        ),
+                        if (_statusMessage != null) ...[
+                          const SizedBox(height: 12),
+                          Text(
+                            _statusMessage!,
+                            textAlign: TextAlign.center,
+                            style: Theme.of(context).textTheme.bodyMedium,
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                )
+              : ConnectWaitingPanel(
+                  peerDisplayName: widget.peer.displayName,
+                  statusMessage: _statusMessage,
+                ),
         ),
       );
     }
@@ -210,7 +243,16 @@ class _RecentConnectScreenState extends State<RecentConnectScreen> {
         }
 
         return Scaffold(
-          appBar: AppBar(title: Text(widget.peer.displayName)),
+          appBar: AppBar(
+            title: Text(widget.peer.displayName),
+            actions: [
+              IconButton(
+                onPressed: _cancelAndGoHome,
+                icon: const Icon(Icons.close),
+                tooltip: 'İptal',
+              ),
+            ],
+          ),
           body: SafeArea(
             child: Center(
               child: Padding(

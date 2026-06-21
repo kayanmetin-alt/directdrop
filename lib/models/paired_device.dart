@@ -45,6 +45,7 @@ class PairedDevice {
 enum WakeRequestType {
   connect,
   fileRequest,
+  reconnect,
 }
 
 class WakeRequest {
@@ -64,22 +65,36 @@ class WakeRequest {
 
   factory WakeRequest.fromMap(Map<dynamic, dynamic> map) {
     final typeRaw = map['type'] as String? ?? 'connect';
+    WakeRequestType type;
+    switch (typeRaw) {
+      case 'file_request':
+        type = WakeRequestType.fileRequest;
+        break;
+      case 'reconnect':
+        type = WakeRequestType.reconnect;
+        break;
+      default:
+        type = WakeRequestType.connect;
+    }
+    final roomRaw = map['roomCode'] as String? ?? '';
     return WakeRequest(
-      roomCode: (map['roomCode'] as String).trim().toUpperCase(),
-      fromDeviceId: map['fromDeviceId'] as String,
+      roomCode: roomRaw.trim().toUpperCase(),
+      fromDeviceId: map['fromDeviceId'] as String? ?? '',
       fromDeviceName: map['fromDeviceName'] as String? ?? 'Cihaz',
-      type: typeRaw == 'file_request'
-          ? WakeRequestType.fileRequest
-          : WakeRequestType.connect,
+      type: type,
       createdAt: (map['createdAt'] as num?)?.toInt() ?? 0,
     );
   }
 
   Map<String, dynamic> toMap() => {
-        'roomCode': roomCode,
+        if (roomCode.isNotEmpty) 'roomCode': roomCode,
         'fromDeviceId': fromDeviceId,
         'fromDeviceName': fromDeviceName,
-        'type': type == WakeRequestType.fileRequest ? 'file_request' : 'connect',
+        'type': switch (type) {
+          WakeRequestType.fileRequest => 'file_request',
+          WakeRequestType.reconnect => 'reconnect',
+          WakeRequestType.connect => 'connect',
+        },
         'createdAt': createdAt,
       };
 }

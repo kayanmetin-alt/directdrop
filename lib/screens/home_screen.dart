@@ -1,7 +1,10 @@
 import 'dart:async';
 
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 
+import '../models/reconnect_request.dart';
 import '../models/paired_device.dart';
 import '../services/paired_devices_service.dart';
 import '../services/recent_connection_service.dart';
@@ -9,7 +12,9 @@ import 'host_screen.dart';
 import 'join_screen.dart';
 import 'recent_connect_screen.dart';
 import '../widgets/download_location_settings.dart';
+import '../widgets/my_device_qr_card.dart';
 import '../widgets/app_version_label.dart';
+import 'incoming_reconnect_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -56,6 +61,124 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  Future<void> _approveReconnect(ReconnectRequest request) async {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => IncomingReconnectScreen(
+          request: request,
+          autoApprove: true,
+        ),
+      ),
+    );
+  }
+
+  void _rejectReconnect() {
+    unawaited(_recentConnect.rejectIncomingReconnect());
+  }
+
+  Widget _buildReconnectPromptCard(
+    ThemeData theme,
+    ReconnectRequest reconnect,
+  ) {
+    return Card(
+      elevation: 0,
+      color: theme.colorScheme.secondaryContainer,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(
+                  Icons.link,
+                  color: theme.colorScheme.primary,
+                  size: 28,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '${reconnect.fromDeviceName} bağlantı kurmak istiyor.',
+                        style: theme.textTheme.titleMedium,
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        'Bağlantıyı onaylıyor musunuz?',
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          color: theme.colorScheme.onSecondaryContainer,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                Expanded(
+                  child: FilledButton(
+                    onPressed: () => _approveReconnect(reconnect),
+                    child: const Text('Onayla'),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: _rejectReconnect,
+                    child: const Text('Reddet'),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _deviceRowCard({
+    required ThemeData theme,
+    required PairedDevice device,
+    required bool hasPendingReconnect,
+  }) {
+    return Card(
+      color: hasPendingReconnect
+          ? theme.colorScheme.secondaryContainer.withValues(alpha: 0.35)
+          : null,
+      child: ListTile(
+        leading: Icon(
+          _platformIcon(device.platform),
+          color: theme.colorScheme.primary,
+        ),
+        title: Text(device.displayName),
+        subtitle: Text(
+          hasPendingReconnect
+              ? 'Bağlantı isteği bekliyor'
+              : 'Son: ${_formatLastSeen(device.lastConnectedAt)}',
+        ),
+        trailing: PopupMenuButton<String>(
+          onSelected: (value) {
+            if (value == 'remove') {
+              _pairedService.remove(device.deviceId);
+            }
+          },
+          itemBuilder: (context) => const [
+            PopupMenuItem(
+              value: 'remove',
+              child: Text('Listeden kaldır'),
+            ),
+          ],
+        ),
+        onTap: hasPendingReconnect ? null : () => _openRecentConnect(device),
+      ),
+    );
+  }
+
   IconData _platformIcon(String platform) {
     switch (platform) {
       case 'ios':
@@ -84,6 +207,10 @@ class _HomeScreenState extends State<HomeScreen> {
     final theme = Theme.of(context);
     final recent = _pairedService.devices;
     final incoming = _recentConnect.incomingInvitePeer;
+    final reconnect = _recentConnect.incomingReconnectRequest;
+
+    final isMobile = Platform.isIOS || Platform.isAndroid;
+    final horizontalPadding = isMobile ? 16.0 : 24.0;
 
     return Scaffold(
       appBar: AppBar(
@@ -97,11 +224,18 @@ class _HomeScreenState extends State<HomeScreen> {
         ],
       ),
       body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
+        child: SingleChildScrollView(
+          physics: isMobile
+              ? const ClampingScrollPhysics()
+              : const AlwaysScrollableScrollPhysics(),
+          padding: EdgeInsets.all(horizontalPadding),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              if (reconnect != null) ...[
+                _buildReconnectPromptCard(theme, reconnect),
+                const SizedBox(height: 16),
+              ],
               if (incoming != null) ...[
                 Material(
                   color: theme.colorScheme.primaryContainer,
@@ -154,70 +288,49 @@ class _HomeScreenState extends State<HomeScreen> {
                 icon: const Icon(Icons.download),
                 label: const Text('Koda Katıl'),
               ),
-              const SizedBox(height: 20),
+              const SizedBox(height: 16),
               const DownloadLocationSettings(),
-              const SizedBox(height: 20),
+              const SizedBox(height: 16),
+              const MyDeviceQrCard(),
+              const SizedBox(height: 16),
               Text(
                 'Son eşleşmeler',
                 style: theme.textTheme.titleMedium,
               ),
               const SizedBox(height: 4),
               Text(
-                'Yalnızca bir cihazdan eşleşmeye dokunun. Diğer tarafta uygulama '
-                'açık kalsın — oda orada otomatik açılır (QR gerekmez).',
+                'Listeden dokunun; karşı cihazda onay isteği görünür.',
                 style: theme.textTheme.bodySmall?.copyWith(
                   color: theme.colorScheme.onSurfaceVariant,
                 ),
               ),
               const SizedBox(height: 8),
-              Expanded(
-                child: recent.isEmpty
-                    ? Center(
-                        child: Text(
-                          'Henüz kayıtlı eşleşme yok.\n'
-                          'İlk bağlantıyı QR veya kod ile yapın.',
-                          textAlign: TextAlign.center,
-                          style: theme.textTheme.bodyMedium?.copyWith(
-                            color: theme.colorScheme.onSurfaceVariant,
-                          ),
-                        ),
-                      )
-                    : ListView.separated(
-                        itemCount: recent.length,
-                        separatorBuilder: (_, __) => const SizedBox(height: 8),
-                        itemBuilder: (context, index) {
-                          final device = recent[index];
-                          return Card(
-                            child: ListTile(
-                              leading: Icon(
-                                _platformIcon(device.platform),
-                                color: theme.colorScheme.primary,
-                              ),
-                              title: Text(device.displayName),
-                              subtitle: Text(
-                                'Son: ${_formatLastSeen(device.lastConnectedAt)}',
-                              ),
-                              trailing: PopupMenuButton<String>(
-                                onSelected: (value) {
-                                  if (value == 'remove') {
-                                    _pairedService.remove(device.deviceId);
-                                  }
-                                },
-                                itemBuilder: (context) => const [
-                                  PopupMenuItem(
-                                    value: 'remove',
-                                    child: Text('Listeden kaldır'),
-                                  ),
-                                ],
-                              ),
-                              onTap: () => _openRecentConnect(device),
-                            ),
-                          );
-                        },
-                      ),
-              ),
-              const SizedBox(height: 8),
-              const AppVersionLabel(),
+              if (recent.isEmpty)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 24),
+                  child: Text(
+                    'Henüz kayıtlı eşleşme yok.\n'
+                    'Yukarıdaki QR kodunuzu okutarak veya Koda Katıl ile bağlanın.',
+                    textAlign: TextAlign.center,
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                )
+              else
+                ...recent.map(
+                  (device) => Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: _deviceRowCard(
+                      theme: theme,
+                      device: device,
+                      hasPendingReconnect:
+                          reconnect?.fromDeviceId == device.deviceId,
+                    ),
+                  ),
+                ),
+              const SizedBox(height: 16),
+              const Center(child: AppVersionLabel()),
             ],
           ),
         ),

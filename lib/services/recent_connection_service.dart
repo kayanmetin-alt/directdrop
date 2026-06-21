@@ -2,17 +2,23 @@ import 'dart:async';
 
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_database/firebase_database.dart';
-import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
+import 'package:flutter/scheduler.dart';
 
 import '../models/paired_device.dart';
+import '../models/reconnect_request.dart';
 import '../providers/transfer_session_controller.dart';
+import '../utils/session_exit_helper.dart';
 import '../utils/user_facing_error.dart';
 import 'device_identity_service.dart';
 import 'device_registry_service.dart';
 import 'firebase_auth_service.dart';
 import 'firebase_signaling_service.dart';
 import 'pair_connect_coordinator.dart';
+import 'paired_auto_connect_service.dart';
+import 'notification_service.dart';
 import 'paired_devices_service.dart';
+import 'persistent_invite_code_service.dart';
 
 /// Son eşleşmeler + Firebase ile yeniden bağlanma.
 class RecentConnectionService extends ChangeNotifier {
@@ -20,7 +26,7 @@ class RecentConnectionService extends ChangeNotifier {
 
   static final RecentConnectionService instance = RecentConnectionService._();
 
-  static const _inviteMaxAge = Duration(minutes: 3);
+  static const _inviteMaxAge = Duration(minutes: 5);
 
   final DeviceRegistryService _registry = DeviceRegistryService();
   final FirebaseSignalingService _signaling = FirebaseSignalingService();
@@ -28,10 +34,15 @@ class RecentConnectionService extends ChangeNotifier {
 
   StreamSubscription<DatabaseEvent>? _inviteAddedSubscription;
   StreamSubscription<DatabaseEvent>? _inviteChangedSubscription;
+  StreamSubscription<DatabaseEvent>? _reconnectAddedSubscription;
+  StreamSubscription<DatabaseEvent>? _reconnectChangedSubscription;
+  StreamSubscription<DatabaseEvent>? _peerDepartedAddedSubscription;
+  StreamSubscription<DatabaseEvent>? _peerDepartedChangedSubscription;
   final Map<String, StreamSubscription<DatabaseEvent>> _pairSessionSubs = {};
 
   bool _listening = false;
   PairedDevice? _incomingInvitePeer;
+  ReconnectRequest? _incomingReconnectRequest;
   String? _autoConnectActivePeerId;
   final Map<String, Future<TransferSessionController>> _inflight = {};
 
@@ -41,11 +52,21 @@ class RecentConnectionService extends ChangeNotifier {
   bool suppressAutoConnectThisLaunch = false;
 
   PairedDevice? get incomingInvitePeer => _incomingInvitePeer;
+  ReconnectRequest? get incomingReconnectRequest => _incomingReconnectRequest;
 
   bool get isListening => _listening;
 
+  bool isInflightFor(String peerDeviceId) => _inflight.containsKey(peerDeviceId);
+
   void clearAutoConnectActive() {
     _autoConnectActivePeerId = null;
+  }
+
+  void abandonPeerConnection(String peerDeviceId) {
+    _autoConnectActivePeerId = null;
+    _inflight.remove(peerDeviceId);
+    clearIncomingReconnect();
+    clearIncomingInvite();
   }
 
   Future<void> ensureListening() async {
@@ -69,11 +90,34 @@ class RecentConnectionService extends ChangeNotifier {
         unawaited(_onInviteSnapshot(event.snapshot));
       });
 
+      await _reconnectAddedSubscription?.cancel();
+      await _reconnectChangedSubscription?.cancel();
+      final reconnectRef = _registry.reconnectRequestsRef(myId);
+      _reconnectAddedSubscription = reconnectRef.onChildAdded.listen((event) {
+        unawaited(_onReconnectRequestSnapshot(event.snapshot));
+      });
+      _reconnectChangedSubscription = reconnectRef.onChildChanged.listen((event) {
+        unawaited(_onReconnectRequestSnapshot(event.snapshot));
+      });
+
+      await _peerDepartedAddedSubscription?.cancel();
+      await _peerDepartedChangedSubscription?.cancel();
+      final departedRef = _registry.peerDepartedRef(myId);
+      _peerDepartedAddedSubscription = departedRef.onChildAdded.listen((event) {
+        unawaited(_onPeerDepartedSnapshot(event.snapshot, myId));
+      });
+      _peerDepartedChangedSubscription =
+          departedRef.onChildChanged.listen((event) {
+        unawaited(_onPeerDepartedSnapshot(event.snapshot, myId));
+      });
+
       await _refreshPairSessionWatchers();
       PairedDevicesService.instance.addListener(_refreshPairSessionWatchers);
 
       if (!suppressAutoConnectThisLaunch) {
         await _processExistingInvites(myId);
+        await _processExistingReconnectRequests(myId);
+        await _processExistingPeerDeparted(myId);
       }
       suppressAutoConnectThisLaunch = false;
     } catch (e) {
@@ -91,13 +135,22 @@ class RecentConnectionService extends ChangeNotifier {
     PairedDevicesService.instance.removeListener(_refreshPairSessionWatchers);
     _inviteAddedSubscription?.cancel();
     _inviteChangedSubscription?.cancel();
+    _reconnectAddedSubscription?.cancel();
+    _reconnectChangedSubscription?.cancel();
+    _peerDepartedAddedSubscription?.cancel();
+    _peerDepartedChangedSubscription?.cancel();
     for (final sub in _pairSessionSubs.values) {
       sub.cancel();
     }
     _pairSessionSubs.clear();
     _inviteAddedSubscription = null;
     _inviteChangedSubscription = null;
+    _reconnectAddedSubscription = null;
+    _reconnectChangedSubscription = null;
+    _peerDepartedAddedSubscription = null;
+    _peerDepartedChangedSubscription = null;
     _incomingInvitePeer = null;
+    _incomingReconnectRequest = null;
   }
 
   Future<void> _refreshPairSessionWatchers() async {
@@ -150,6 +203,134 @@ class RecentConnectionService extends ChangeNotifier {
     notifyListeners();
   }
 
+  void clearIncomingReconnect() {
+    _incomingReconnectRequest = null;
+    notifyListeners();
+  }
+
+  Future<void> rejectIncomingReconnect() async {
+    final request = _incomingReconnectRequest;
+    if (request == null) return;
+
+    final myId = await DeviceIdentityService.instance.getDeviceId();
+    await _registry.sendReconnectRejection(
+      targetDeviceId: request.fromDeviceId,
+      fromDeviceId: myId,
+      fromDeviceName: DeviceIdentityService.instance.displayName,
+    );
+    await _registry.clearReconnectRequest(
+      targetDeviceId: myId,
+      fromDeviceId: request.fromDeviceId,
+    );
+    clearIncomingReconnect();
+  }
+
+  Future<void> rejectIncomingReconnectRequest(ReconnectRequest request) async {
+    _incomingReconnectRequest = request;
+    await rejectIncomingReconnect();
+  }
+
+  Future<TransferSessionController?> approveIncomingReconnect() async {
+    final request = _incomingReconnectRequest;
+    if (request == null) return null;
+
+    await PairedDevicesService.instance.load();
+    var peer =
+        PairedDevicesService.instance.findByDeviceId(request.fromDeviceId);
+    peer ??= PairedDevice(
+      deviceId: request.fromDeviceId,
+      displayName: request.fromDeviceName,
+      platform: 'unknown',
+      lastConnectedAt: DateTime.now(),
+    );
+    if (PairedDevicesService.instance.findByDeviceId(request.fromDeviceId) ==
+        null) {
+      await PairedDevicesService.instance.savePair(
+        deviceId: request.fromDeviceId,
+        displayName: request.fromDeviceName,
+        platform: 'unknown',
+      );
+    }
+
+    final myId = await DeviceIdentityService.instance.getDeviceId();
+    await _registry.clearReconnectRequest(
+      targetDeviceId: myId,
+      fromDeviceId: request.fromDeviceId,
+    );
+    clearIncomingReconnect();
+
+    await FirebaseAuthService.instance.requireUid();
+    await _registerWithTimeout();
+    await _invalidateStaleReconnectState(myId, peer.deviceId);
+    await _coordinator.clearSession(
+      myDeviceId: myId,
+      peerDeviceId: peer.deviceId,
+    );
+    await _registry.clearPairInvitesBetween(
+      myDeviceId: myId,
+      peerDeviceId: peer.deviceId,
+    );
+
+    PairedAutoConnectService.instance.setManualSessionActive(true);
+    final controller = TransferSessionController();
+    try {
+      await controller.hostPairInvite(peer);
+      return controller;
+    } catch (e) {
+      if (!controller.isConnected && !controller.isDisposed) {
+        await controller.disconnect();
+        controller.dispose();
+      }
+      rethrow;
+    } finally {
+      PairedAutoConnectService.instance.setManualSessionActive(false);
+    }
+  }
+
+  Future<TransferSessionController?> approveReconnectRequest(
+    ReconnectRequest request,
+  ) async {
+    _incomingReconnectRequest = request;
+    notifyListeners();
+    return approveIncomingReconnect();
+  }
+
+  /// RTDB yeniden bağlanma + uyandırma bildirimi (çift tetiklemeyi birleştirir).
+  Future<void> promptIncomingReconnect(ReconnectRequest request) async {
+    if (!_isFreshReconnectRequest({
+      'clientCreatedAt': request.clientCreatedAt,
+    })) {
+      return;
+    }
+
+    final existing = _incomingReconnectRequest;
+    if (existing != null && existing.fromDeviceId == request.fromDeviceId) {
+      if (request.clientCreatedAt <= existing.clientCreatedAt) {
+        notifyListeners();
+        return;
+      }
+    }
+
+    _incomingReconnectRequest = request;
+    notifyListeners();
+
+    await PairedDevicesService.instance.load();
+    final peer =
+        PairedDevicesService.instance.findByDeviceId(request.fromDeviceId);
+
+    if (!_isAppInForeground()) {
+      await NotificationService.instance.showReconnectRequestNotification(
+        request,
+        peerDisplayName: peer?.displayName,
+      );
+    }
+  }
+
+  bool _isAppInForeground() {
+    final state = SchedulerBinding.instance.lifecycleState;
+    return state == null || state == AppLifecycleState.resumed;
+  }
+
   Future<void> _onInviteSnapshot(DataSnapshot snapshot) async {
     final fromId = snapshot.key;
     if (fromId == null) return;
@@ -180,6 +361,101 @@ class RecentConnectionService extends ChangeNotifier {
       return;
     }
     debugPrint('Otomatik bağlantı: openAutoConnectScreen tanımlı değil');
+  }
+
+  Future<void> _onReconnectRequestSnapshot(DataSnapshot snapshot) async {
+    final fromId = snapshot.key;
+    if (fromId == null) return;
+
+    final value = snapshot.value;
+    if (value is! Map) return;
+    final data = Map<String, dynamic>.from(value);
+    if (!_isFreshReconnectRequest(data)) return;
+
+    await promptIncomingReconnect(ReconnectRequest.fromMap(fromId, data));
+  }
+
+  Future<void> _onPeerDepartedSnapshot(
+    DataSnapshot snapshot,
+    String myId,
+  ) async {
+    final fromId = snapshot.key;
+    if (fromId == null) return;
+
+    final value = snapshot.value;
+    if (value is! Map) return;
+    final data = Map<String, dynamic>.from(value);
+    if (!_isFreshPeerDeparted(data)) return;
+
+    final name = data['fromDeviceName'] as String? ?? 'Karşı cihaz';
+    await _registry.clearPeerDeparted(myDeviceId: myId, fromDeviceId: fromId);
+
+    await SessionExitHelper.handlePeerDepartedSignal(
+      fromDeviceId: fromId,
+      fromDeviceName: name,
+    );
+  }
+
+  Future<void> _processExistingPeerDeparted(String myId) async {
+    try {
+      final snapshot = await _registry.peerDepartedRef(myId).get();
+      if (!snapshot.exists || snapshot.value is! Map) return;
+
+      final departed = Map<String, dynamic>.from(snapshot.value as Map);
+      for (final fromId in departed.keys) {
+        final data = departed[fromId];
+        if (data is! Map) continue;
+        if (!_isFreshPeerDeparted(Map<String, dynamic>.from(data))) {
+          await _registry.clearPeerDeparted(
+            myDeviceId: myId,
+            fromDeviceId: fromId,
+          );
+          continue;
+        }
+        await _onPeerDepartedSnapshot(snapshot.child(fromId), myId);
+        return;
+      }
+    } catch (e) {
+      debugPrint('Mevcut ayrılma sinyalleri okunamadı: $e');
+    }
+  }
+
+  bool _isFreshPeerDeparted(Map<String, dynamic> data) {
+    final clientMs = (data['clientCreatedAt'] as num?)?.toInt();
+    if (clientMs == null) return false;
+    final age = DateTime.now().millisecondsSinceEpoch - clientMs;
+    return age >= 0 && age <= _inviteMaxAge.inMilliseconds;
+  }
+
+  Future<void> _processExistingReconnectRequests(String myId) async {
+    try {
+      final snapshot = await _registry.reconnectRequestsRef(myId).get();
+      if (!snapshot.exists || snapshot.value is! Map) return;
+
+      final requests = Map<String, dynamic>.from(snapshot.value as Map);
+      for (final fromId in requests.keys) {
+        final data = requests[fromId];
+        if (data is! Map) continue;
+        if (!_isFreshReconnectRequest(Map<String, dynamic>.from(data))) {
+          await _registry.clearReconnectRequest(
+            targetDeviceId: myId,
+            fromDeviceId: fromId,
+          );
+          continue;
+        }
+        await _onReconnectRequestSnapshot(snapshot.child(fromId));
+        return;
+      }
+    } catch (e) {
+      debugPrint('Mevcut yeniden bağlanma istekleri okunamadı: $e');
+    }
+  }
+
+  bool _isFreshReconnectRequest(Map<String, dynamic> data) {
+    final clientMs = (data['clientCreatedAt'] as num?)?.toInt();
+    if (clientMs == null) return false;
+    final age = DateTime.now().millisecondsSinceEpoch - clientMs;
+    return age >= 0 && age <= _inviteMaxAge.inMilliseconds;
   }
 
   Future<void> _processExistingInvites(String myId) async {
@@ -228,10 +504,20 @@ class RecentConnectionService extends ChangeNotifier {
   String? _roomCodeFromInviteSnapshot(DataSnapshot snapshot) {
     if (!snapshot.exists || snapshot.value is! Map) return null;
     final data = Map<String, dynamic>.from(snapshot.value as Map);
+    if (data['rejected'] == true) return null;
     if (!_isFreshInvite(data)) return null;
     final roomCode = data['roomCode'] as String?;
     if (roomCode == null || roomCode.isEmpty) return null;
     return roomCode.trim().toUpperCase();
+  }
+
+  StateError? _rejectionFromInviteSnapshot(DataSnapshot snapshot) {
+    if (!snapshot.exists || snapshot.value is! Map) return null;
+    final data = Map<String, dynamic>.from(snapshot.value as Map);
+    if (data['rejected'] != true) return null;
+    if (!_isFreshInvite(data)) return null;
+    final name = data['fromDeviceName'] as String? ?? 'Karşı cihaz';
+    return StateError('$name bağlantı isteğinizi reddetti.');
   }
 
   Future<void> _registerWithTimeout() async {
@@ -301,12 +587,15 @@ class RecentConnectionService extends ChangeNotifier {
 
       roomCode ??= await _waitForRoomCodeFromPeer(
         peer.deviceId,
-        timeout: const Duration(seconds: 20),
+        peerDisplayName: peer.displayName,
+        timeout: const Duration(seconds: 90),
+        onProgress: onProgress,
       );
 
       if (roomCode == null) {
         throw StateError(
-          'Davet bulunamadı. Sadece bir cihazdan bağlanın; 5 sn sonra tekrar deneyin.',
+          '${peer.displayName} yanıt vermedi veya onaylamadı. '
+          'Karşı cihazda uygulama açıkken tekrar deneyin.',
         );
       }
 
@@ -333,7 +622,24 @@ class RecentConnectionService extends ChangeNotifier {
     }
   }
 
-  /// Listeden dokununca: tek oda (pairConnect), karşı taraf otomatik katılır.
+  /// Kalıcı cihaz QR/kodu ile bağlan (ilk eşleşme veya yeniden bağlanma).
+  Future<TransferSessionController> connectViaDeviceInvite(
+    DeviceInviteLookup lookup, {
+    void Function(String message)? onProgress,
+  }) async {
+    await PairedDevicesService.instance.savePair(
+      deviceId: lookup.deviceId,
+      displayName: lookup.displayName,
+      platform: lookup.platform,
+    );
+    final peer = PairedDevicesService.instance.findByDeviceId(lookup.deviceId);
+    if (peer == null) {
+      throw StateError('Cihaz kaydedilemedi.');
+    }
+    return connectToPeer(peer, onProgress: onProgress);
+  }
+
+  /// Listeden dokununca: QR okutmuş gibi — karşı cihaz ev sahibi olur, biz katılırız.
   Future<TransferSessionController> connectToPeer(
     PairedDevice peer, {
     void Function(String message)? onProgress,
@@ -369,7 +675,20 @@ class RecentConnectionService extends ChangeNotifier {
       );
     }
 
-    final inviteCode = await _readInviteRoomCode(peerDeviceId);
+    final inviteSnapshot = await _registry
+        .pairInvitesRef(myId)
+        .child(peerDeviceId)
+        .get()
+        .timeout(const Duration(seconds: 10));
+    if (_rejectionFromInviteSnapshot(inviteSnapshot) != null) {
+      await _registry
+          .pairInvitesRef(myId)
+          .child(peerDeviceId)
+          .remove();
+      return;
+    }
+
+    final inviteCode = _roomCodeFromInviteSnapshot(inviteSnapshot);
     if (inviteCode != null && !await _isRoomJoinableQuiet(inviteCode)) {
       await _registry.clearPairInvitesBetween(
         myDeviceId: myId,
@@ -386,104 +705,35 @@ class RecentConnectionService extends ChangeNotifier {
     await _registerWithTimeout();
 
     final myId = await DeviceIdentityService.instance.getDeviceId();
+    final identity = DeviceIdentityService.instance;
+
+    // Red / eski davetleri önce temizle — aksi halde _invalidateStaleReconnectState reddi okuyup durur.
+    await _coordinator.clearSession(
+      myDeviceId: myId,
+      peerDeviceId: peer.deviceId,
+    );
+    await _registry.clearPairInvitesBetween(
+      myDeviceId: myId,
+      peerDeviceId: peer.deviceId,
+    );
     await _invalidateStaleReconnectState(myId, peer.deviceId);
 
-    onProgress?.call('Karşı cihaz kontrol ediliyor…');
-    final existingInvite = await _readInviteRoomCode(peer.deviceId);
-    if (existingInvite != null) {
-      return _acceptInviteFromPeer(peer, onProgress: onProgress);
-    }
-
-    final existingSession = await _coordinator.readRole(
-      myDeviceId: myId,
-      peerDeviceId: peer.deviceId,
+    onProgress?.call(
+      '${peer.displayName} cihazına bağlantı isteği gönderildi.',
     );
-    if (existingSession != null && !existingSession.isHost) {
-      return _acceptInviteFromPeer(peer, onProgress: onProgress);
-    }
+
+    await _registry.sendReconnectRequest(
+      targetDeviceId: peer.deviceId,
+      fromDeviceId: myId,
+      fromDeviceName: identity.displayName,
+    );
 
     onProgress?.call(
-      'Bağlantı hazırlanıyor…\n'
-      'Karşı cihazda uygulama açıksa otomatik katılacak.',
+      '${peer.displayName} onayını bekliyor…\n'
+      'Reddederse bu ekranda bilgilendirileceksiniz.',
     );
 
-    var role = await _coordinator.resolveRole(
-      myDeviceId: myId,
-      peerDeviceId: peer.deviceId,
-    );
-
-    if (!role.isHost) {
-      return _acceptInviteFromPeer(peer, onProgress: onProgress);
-    }
-
-    try {
-      await _signaling.assertRoomJoinable(role.roomCode);
-    } on StateError {
-      await _coordinator.clearSession(
-        myDeviceId: myId,
-        peerDeviceId: peer.deviceId,
-      );
-      role = await _coordinator.resolveRole(
-        myDeviceId: myId,
-        peerDeviceId: peer.deviceId,
-      );
-      if (!role.isHost) {
-        return _acceptInviteFromPeer(peer, onProgress: onProgress);
-      }
-    }
-
-    var controller = TransferSessionController();
-    try {
-      await _registry.clearPairInvitesBetween(
-        myDeviceId: myId,
-        peerDeviceId: peer.deviceId,
-      );
-      onProgress?.call('Oda açılıyor (${role.roomCode})…');
-      await controller.hostPairInvite(peer, roomCode: role.roomCode);
-      await _coordinator.markRoomReady(
-        myDeviceId: myId,
-        peerDeviceId: peer.deviceId,
-      );
-
-      onProgress?.call('Karşı cihazın katılması bekleniyor…');
-      final session = await _waitUntilConnected(
-        controller,
-        timeout: const Duration(seconds: 90),
-      );
-      if (session == null) {
-        throw StateError(
-          'Karşı cihaz katılmadı. Diğer tarafta uygulama açık olsun; '
-          'sadece bir kez listeden dokunun.',
-        );
-      }
-      await _coordinator.clearSession(
-        myDeviceId: myId,
-        peerDeviceId: peer.deviceId,
-      );
-      clearIncomingInvite();
-      return controller;
-    } on StateError {
-      await _coordinator.clearSession(
-        myDeviceId: myId,
-        peerDeviceId: peer.deviceId,
-      );
-      if (!controller.isConnected && !controller.isDisposed) {
-        await controller.disconnect();
-        controller.dispose();
-      }
-      rethrow;
-    } catch (e, stack) {
-      debugPrint('connectToPeer host: $e\n$stack');
-      await _coordinator.clearSession(
-        myDeviceId: myId,
-        peerDeviceId: peer.deviceId,
-      );
-      if (!controller.isConnected && !controller.isDisposed) {
-        await controller.disconnect();
-        controller.dispose();
-      }
-      throw StateError(userFacingMessage(e));
-    }
+    return _acceptInviteFromPeer(peer, onProgress: onProgress);
   }
 
   Future<TransferSessionController> _joinRoomAsGuest({
@@ -567,19 +817,25 @@ class RecentConnectionService extends ChangeNotifier {
         .child(peerDeviceId)
         .get()
         .timeout(const Duration(seconds: 10));
+    final rejection = _rejectionFromInviteSnapshot(snapshot);
+    if (rejection != null) throw rejection;
     return _roomCodeFromInviteSnapshot(snapshot);
   }
 
   Future<String?> _waitForRoomCodeFromPeer(
     String peerDeviceId, {
+    required String peerDisplayName,
     required Duration timeout,
+    void Function(String message)? onProgress,
   }) async {
     final myId = await DeviceIdentityService.instance.getDeviceId();
     final ref = _registry.pairInvitesRef(myId).child(peerDeviceId);
 
-    final existingCode = _roomCodeFromInviteSnapshot(
-      await ref.get().timeout(const Duration(seconds: 10)),
-    );
+    final initial = await ref.get().timeout(const Duration(seconds: 10));
+    final rejection = _rejectionFromInviteSnapshot(initial);
+    if (rejection != null) throw rejection;
+
+    final existingCode = _roomCodeFromInviteSnapshot(initial);
     if (existingCode != null) return existingCode;
 
     final completer = Completer<String?>();
@@ -587,8 +843,14 @@ class RecentConnectionService extends ChangeNotifier {
 
     sub = ref.onValue.listen(
       (event) {
+        final rejected = _rejectionFromInviteSnapshot(event.snapshot);
+        if (rejected != null && !completer.isCompleted) {
+          completer.completeError(rejected);
+          return;
+        }
         final code = _roomCodeFromInviteSnapshot(event.snapshot);
         if (code != null && !completer.isCompleted) {
+          onProgress?.call('$peerDisplayName onayladı. Odaya katılınıyor…');
           completer.complete(code);
         }
       },

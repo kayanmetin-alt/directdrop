@@ -10,8 +10,10 @@ import '../providers/transfer_session_controller.dart';
 import '../services/webrtc_service.dart';
 import 'device_identity_service.dart';
 import 'device_registry_service.dart';
+import 'active_session_registry.dart';
 import 'paired_devices_service.dart';
 import 'paired_presence_service.dart';
+import 'recent_connection_service.dart';
 
 class PairedAutoConnectService extends ChangeNotifier {
   PairedAutoConnectService._();
@@ -37,6 +39,7 @@ class PairedAutoConnectService extends ChangeNotifier {
   bool _started = false;
   bool _syncInProgress = false;
   bool _manualSessionActive = false;
+  DateTime? _autoConnectPausedUntil;
   final Map<String, DateTime> _sessionStartedAt = {};
   final Map<String, DateTime> _lastInviteNudge = {};
 
@@ -96,6 +99,20 @@ class PairedAutoConnectService extends ChangeNotifier {
     _scheduleSync(immediate: true);
   }
 
+  Future<void> leavePeer(String peerDeviceId) async {
+    _lastConnectAttempt[peerDeviceId] = DateTime.now();
+    await _disposeSession(peerDeviceId);
+  }
+
+  /// Oturum bittikten sonra kısa süre otomatik yeniden bağlanmayı durdur.
+  void pauseAutoConnectFor(Duration duration) {
+    final until = DateTime.now().add(duration);
+    if (_autoConnectPausedUntil == null ||
+        until.isAfter(_autoConnectPausedUntil!)) {
+      _autoConnectPausedUntil = until;
+    }
+  }
+
   /// Manuel QR/kod ekranı açıkken otomatik bağlantıyı durdur.
   void setManualSessionActive(bool active) {
     if (_manualSessionActive == active) return;
@@ -146,6 +163,49 @@ class PairedAutoConnectService extends ChangeNotifier {
     if (isConnectedTo(peer.deviceId)) return;
     if (isConnectingTo(peer.deviceId)) return;
     _scheduleSync();
+  }
+
+  /// Karşı cihaz onay verince ev sahibi olup oda açar.
+  Future<TransferSessionController?> approveIncomingReconnect(
+    PairedDevice peer,
+  ) async {
+    await ensureRunning();
+    if (_manualSessionActive) {
+      throw StateError('Manuel oturum açık. Önce mevcut ekranı kapatın.');
+    }
+    if (isConnectedTo(peer.deviceId)) {
+      return _sessionsByPeerId[peer.deviceId];
+    }
+    if (isHostingPeer(peer.deviceId)) {
+      return _sessionsByPeerId[peer.deviceId];
+    }
+
+    final existing = _sessionsByPeerId[peer.deviceId];
+    if (existing != null && !existing.isConnected) {
+      await _disposeSession(peer.deviceId);
+    }
+
+    await _hostForPeer(peer);
+    return _sessionsByPeerId[peer.deviceId];
+  }
+
+  @Deprecated('Onay akışı RecentConnectionService üzerinden yapılır')
+  Future<void> handleIncomingReconnect({
+    required String fromDeviceId,
+    required String fromDeviceName,
+  }) async {
+    await PairedDevicesService.instance.load();
+    var peer = PairedDevicesService.instance.findByDeviceId(fromDeviceId);
+    if (peer == null) {
+      await PairedDevicesService.instance.savePair(
+        deviceId: fromDeviceId,
+        displayName: fromDeviceName,
+        platform: 'unknown',
+      );
+      peer = PairedDevicesService.instance.findByDeviceId(fromDeviceId);
+    }
+    if (peer == null) return;
+    await approveIncomingReconnect(peer);
   }
 
   /// Manuel dokunuş — force:true ise cihaz kimliği fark etmez, oda açılır.
@@ -281,8 +341,14 @@ class PairedAutoConnectService extends ChangeNotifier {
     final fromId = snapshot.key;
     if (fromId == null) return;
 
+    if (RecentConnectionService.instance.isInflightFor(fromId)) {
+      return;
+    }
+
     final value = snapshot.value;
     if (value is! Map) return;
+
+    if (value['rejected'] == true) return;
 
     final roomCode = value['roomCode'] as String?;
     if (roomCode == null || roomCode.isEmpty) return;
@@ -404,6 +470,11 @@ class PairedAutoConnectService extends ChangeNotifier {
 
   Future<void> _syncConnections() async {
     if (!_started || _syncInProgress || _manualSessionActive) return;
+    if (_autoConnectPausedUntil != null &&
+        DateTime.now().isBefore(_autoConnectPausedUntil!)) {
+      return;
+    }
+    if (ActiveSessionRegistry.instance.hasActiveSession) return;
     _syncInProgress = true;
 
     try {
@@ -459,11 +530,7 @@ class PairedAutoConnectService extends ChangeNotifier {
     _attachSessionListener(peer.deviceId, controller);
 
     try {
-      if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
-        await controller.hostPairInvite(peer);
-      } else {
-        await controller.connectToPairedDevice(peer);
-      }
+      await controller.hostPairInvite(peer);
     } catch (e) {
       debugPrint('Otomatik bağlantı başlatılamadı (${peer.displayName}): $e');
       await _disposeSession(peer.deviceId);

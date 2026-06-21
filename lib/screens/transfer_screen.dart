@@ -1,5 +1,7 @@
 import 'dart:io';
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -8,7 +10,7 @@ import '../providers/transfer_session_controller.dart';
 import '../services/send_file_picker_service.dart';
 import '../services/webrtc_service.dart';
 import '../services/transfer_history_service.dart';
-import '../services/active_session_registry.dart';
+import '../utils/session_exit_helper.dart';
 import '../widgets/active_transfer_tile.dart';
 import '../widgets/desktop_file_drop_overlay.dart';
 import '../widgets/download_location_settings.dart';
@@ -40,6 +42,7 @@ class _TransferScreenState extends State<TransferScreen>
   bool _sending = false;
   String? _error;
   bool _sendButtonReady = false;
+  bool _handledPeerLeft = false;
   final FocusNode _sendButtonFocus = FocusNode(skipTraversal: true);
   final _historyService = TransferHistoryService.instance;
 
@@ -57,6 +60,7 @@ class _TransferScreenState extends State<TransferScreen>
     }
     _historyService.load();
     _historyService.addListener(_onHistoryChanged);
+    _controller.addListener(_onControllerChanged);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       Future<void>.delayed(const Duration(milliseconds: 600), () {
         if (mounted) setState(() => _sendButtonReady = true);
@@ -68,8 +72,27 @@ class _TransferScreenState extends State<TransferScreen>
     if (mounted) setState(() {});
   }
 
+  void _onControllerChanged() {
+    if (!mounted || _handledPeerLeft || _controller.userInitiatedLeave) return;
+    if (_controller.peerHasLeft) {
+      _handledPeerLeft = true;
+      final peerLabel =
+          widget.peerDisplayName ?? _controller.peerDisplayName ?? 'Karşı cihaz';
+      unawaited(
+        SessionExitHelper.leaveAndGoHome(
+          controller: _controller,
+          peerDeviceId: widget.peerDeviceId ?? _controller.peerDeviceId,
+          context: context,
+          snackMessage: '$peerLabel bağlantıyı kapattı',
+          userInitiatedDisconnect: false,
+        ),
+      );
+    }
+  }
+
   @override
   void dispose() {
+    _controller.removeListener(_onControllerChanged);
     _historyService.removeListener(_onHistoryChanged);
     _sendButtonFocus.dispose();
     WidgetsBinding.instance.removeObserver(this);
@@ -144,16 +167,11 @@ class _TransferScreenState extends State<TransferScreen>
 
   Future<void> _disconnect() async {
     if (!mounted) return;
-    try {
-      ActiveSessionRegistry.instance.unregister(_controller);
-      if (!_controller.isDisposed) {
-        await _controller.disconnect();
-      }
-    } catch (e) {
-      debugPrint('Bağlantı kapatma: $e');
-    }
-    if (!mounted) return;
-    Navigator.of(context).popUntil((route) => route.isFirst);
+    await SessionExitHelper.leaveAndGoHome(
+      controller: _controller,
+      peerDeviceId: widget.peerDeviceId ?? _controller.peerDeviceId,
+      context: context,
+    );
   }
 
   Future<void> _confirmClearHistory() async {
@@ -229,7 +247,6 @@ class _TransferScreenState extends State<TransferScreen>
   }
 
   Widget _buildPeerDepartedBody(BuildContext context, String peerLabel) {
-    final theme = Theme.of(context);
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(32),
@@ -239,23 +256,17 @@ class _TransferScreenState extends State<TransferScreen>
             const CircularProgressIndicator(),
             const SizedBox(height: 28),
             Text(
-              '$peerLabel odadan ayrıldı',
+              '$peerLabel bağlantıyı kapattı',
               textAlign: TextAlign.center,
-              style: theme.textTheme.titleMedium,
+              style: Theme.of(context).textTheme.titleMedium,
             ),
             const SizedBox(height: 10),
             Text(
-              'Bağlantı sonlandı. Ana sayfaya dönebilirsiniz.',
+              'Ana sayfaya dönülüyor…',
               textAlign: TextAlign.center,
-              style: theme.textTheme.bodyMedium?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
-              ),
-            ),
-            const SizedBox(height: 28),
-            FilledButton.icon(
-              onPressed: _disconnect,
-              icon: const Icon(Icons.home_outlined),
-              label: const Text('Ana sayfaya dön'),
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
             ),
           ],
         ),
@@ -374,7 +385,10 @@ class _TransferScreenState extends State<TransferScreen>
                     subtitle: Text('Oda ${session.roomCode}'),
                   ),
                 ),
-                if (!_controller.isConnected && _controller.isPaired) ...[
+                if (!_controller.isConnected &&
+                    _controller.isPaired &&
+                    !_controller.userInitiatedLeave &&
+                    !_controller.peerHasLeft) ...[
                   const SizedBox(height: 8),
                   Card(
                     color: Theme.of(context).colorScheme.secondaryContainer,
@@ -449,7 +463,7 @@ class _TransferScreenState extends State<TransferScreen>
                   ),
                 ],
                 const SizedBox(height: 12),
-                const DownloadLocationSettings(),
+                const DownloadLocationSettings(collapsible: true),
                 const SizedBox(height: 16),
                 Row(
                   children: [

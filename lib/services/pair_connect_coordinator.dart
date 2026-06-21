@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 
 import '../utils/room_code_generator.dart';
 import 'firebase_auth_service.dart';
+import 'firebase_signaling_service.dart';
 
 /// Tek bir yeniden bağlanma oturumu (çift oda / çift tıklama önlenir).
 class PairConnectRole {
@@ -44,6 +45,16 @@ class PairConnectCoordinator {
 
   final FirebaseDatabase _database;
   static const _sessionMaxAge = Duration(minutes: 3);
+  final FirebaseSignalingService _signaling = FirebaseSignalingService();
+
+  Future<bool> _isRoomJoinable(String roomCode) async {
+    try {
+      await _signaling.assertRoomJoinable(roomCode);
+      return true;
+    } on StateError {
+      return false;
+    }
+  }
 
   DatabaseReference get _sessions => _database.ref('pairConnect');
 
@@ -90,7 +101,16 @@ class PairConnectCoordinator {
     final ref = sessionRef(myDeviceId, peerDeviceId);
     final existing = await ref.get();
     final parsed = _roleFromSnapshot(existing, myDeviceId);
-    if (parsed != null) return parsed;
+    if (parsed != null) {
+      if (await _isRoomJoinable(parsed.roomCode)) {
+        return parsed;
+      }
+      try {
+        await ref.remove();
+      } catch (e) {
+        debugPrint('Eski pairConnect silinemedi: $e');
+      }
+    }
 
     final roomCode = RoomCodeGenerator.generate();
     final uid = await FirebaseAuthService.instance.requireUid();

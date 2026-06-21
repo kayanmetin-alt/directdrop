@@ -47,6 +47,14 @@ class WebRtcService {
   bool _remoteDescriptionSet = false;
   final List<RTCIceCandidate> _pendingCandidates = [];
 
+  // Müzakere sağlamlığı için durum.
+  String? _localOfferSdp;
+  String? _localAnswerSdp;
+  String? _lastRemoteOfferSdp;
+  Timer? _offerRetryTimer;
+  int _offerAttempts = 0;
+  static const _maxOfferAttempts = 6;
+
   static const _iceServers = [
     {'urls': 'stun:stun.l.google.com:19302'},
     {'urls': 'stun:stun1.l.google.com:19302'},
@@ -79,17 +87,21 @@ class WebRtcService {
     });
 
     _peerConnection!.onIceCandidate = (candidate) async {
-      if (candidate.candidate == null) return;
-      await _signaling.sendMessage(
-        SignalingMessage(
-          type: SignalingType.iceCandidate,
-          fromPeerId: _localPeerId,
-          toPeerId: _remotePeerId,
-          candidate: candidate.candidate,
-          sdpMid: candidate.sdpMid,
-          sdpMLineIndex: candidate.sdpMLineIndex,
-        ),
-      );
+      if (candidate.candidate == null || _disposed) return;
+      try {
+        await _signaling.sendMessage(
+          SignalingMessage(
+            type: SignalingType.iceCandidate,
+            fromPeerId: _localPeerId,
+            toPeerId: _remotePeerId,
+            candidate: candidate.candidate,
+            sdpMid: candidate.sdpMid,
+            sdpMLineIndex: candidate.sdpMLineIndex,
+          ),
+        );
+      } catch (e) {
+        debugPrint('ICE candidate gönderilemedi: $e');
+      }
     };
 
     _peerConnection!.onConnectionState = (state) {
@@ -97,6 +109,7 @@ class WebRtcService {
       debugPrint('WebRTC connection state: $state');
       switch (state) {
         case RTCPeerConnectionState.RTCPeerConnectionStateConnected:
+          _stopOfferRetry();
           _setState(WebRtcConnectionState.connected);
         case RTCPeerConnectionState.RTCPeerConnectionStateFailed:
           _setState(WebRtcConnectionState.failed);
@@ -122,19 +135,62 @@ class WebRtcService {
       _attachDataChannel(_dataChannel!);
 
       // Karşı tarafın signaling dinleyicisini kurması için kısa bekleme.
-      await Future<void>.delayed(const Duration(milliseconds: 600));
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+      await _createAndSendOffer();
+      _startOfferRetry();
+    }
+  }
 
-      final offer = await _peerConnection!.createOffer();
-      await _peerConnection!.setLocalDescription(offer);
+  Future<void> _createAndSendOffer() async {
+    final pc = _peerConnection;
+    if (pc == null || _disposed) return;
+    try {
+      final offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      _localOfferSdp = offer.sdp;
+      await _sendOfferMessage();
+    } catch (e) {
+      debugPrint('Offer oluşturulamadı: $e');
+    }
+  }
+
+  Future<void> _sendOfferMessage() async {
+    final sdp = _localOfferSdp;
+    if (sdp == null || _disposed) return;
+    try {
       await _signaling.sendMessage(
         SignalingMessage(
           type: SignalingType.offer,
           fromPeerId: _localPeerId,
           toPeerId: _remotePeerId,
-          sdp: offer.sdp,
+          sdp: sdp,
         ),
       );
+    } catch (e) {
+      debugPrint('Offer gönderilemedi: $e');
     }
+  }
+
+  /// İlk offer/answer kaybolursa bağlantı kurulana kadar offer'ı yineler.
+  void _startOfferRetry() {
+    _offerRetryTimer?.cancel();
+    _offerAttempts = 0;
+    _offerRetryTimer = Timer.periodic(const Duration(seconds: 2), (timer) {
+      if (_disposed ||
+          _remoteDescriptionSet ||
+          _state == WebRtcConnectionState.connected ||
+          _offerAttempts >= _maxOfferAttempts) {
+        timer.cancel();
+        return;
+      }
+      _offerAttempts++;
+      unawaited(_sendOfferMessage());
+    });
+  }
+
+  void _stopOfferRetry() {
+    _offerRetryTimer?.cancel();
+    _offerRetryTimer = null;
   }
 
   void _attachDataChannel(RTCDataChannel channel) {
@@ -148,6 +204,7 @@ class WebRtcService {
       debugPrint('Data channel state: $state');
       switch (state) {
         case RTCDataChannelState.RTCDataChannelOpen:
+          _stopOfferRetry();
           _setState(WebRtcConnectionState.connected);
         case RTCDataChannelState.RTCDataChannelClosing:
         case RTCDataChannelState.RTCDataChannelClosed:
@@ -162,33 +219,13 @@ class WebRtcService {
 
   Future<void> handleSignalingMessage(SignalingMessage message) async {
     final pc = _peerConnection;
-    if (pc == null) return;
+    if (pc == null || _disposed) return;
 
     switch (message.type) {
       case SignalingType.offer:
-        if (message.sdp == null) return;
-        await pc.setRemoteDescription(
-          RTCSessionDescription(message.sdp, 'offer'),
-        );
-        _remoteDescriptionSet = true;
-        await _flushPendingCandidates();
-        final answer = await pc.createAnswer();
-        await pc.setLocalDescription(answer);
-        await _signaling.sendMessage(
-          SignalingMessage(
-            type: SignalingType.answer,
-            fromPeerId: _localPeerId,
-            toPeerId: _remotePeerId,
-            sdp: answer.sdp,
-          ),
-        );
+        await _handleOffer(pc, message);
       case SignalingType.answer:
-        if (message.sdp == null) return;
-        await pc.setRemoteDescription(
-          RTCSessionDescription(message.sdp, 'answer'),
-        );
-        _remoteDescriptionSet = true;
-        await _flushPendingCandidates();
+        await _handleAnswer(pc, message);
       case SignalingType.iceCandidate:
         if (message.candidate == null) return;
         await _addCandidateSafe(
@@ -201,6 +238,75 @@ class WebRtcService {
       case SignalingType.peerJoined:
       case SignalingType.peerLeft:
         break;
+    }
+  }
+
+  Future<void> _handleOffer(
+    RTCPeerConnection pc,
+    SignalingMessage message,
+  ) async {
+    if (message.sdp == null) return;
+
+    // Aynı offer yeniden geldiyse (initiator yeniden gönderdi) sadece
+    // mevcut answer'ı tekrar yolla — setRemoteDescription'ı tekrarlama.
+    if (_lastRemoteOfferSdp == message.sdp) {
+      if (_localAnswerSdp != null) {
+        await _sendAnswerMessage();
+      }
+      return;
+    }
+
+    try {
+      await pc.setRemoteDescription(
+        RTCSessionDescription(message.sdp, 'offer'),
+      );
+      _lastRemoteOfferSdp = message.sdp;
+      _remoteDescriptionSet = true;
+      await _flushPendingCandidates();
+
+      final answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      _localAnswerSdp = answer.sdp;
+      await _sendAnswerMessage();
+    } catch (e) {
+      debugPrint('Offer işlenemedi: $e');
+    }
+  }
+
+  Future<void> _sendAnswerMessage() async {
+    final sdp = _localAnswerSdp;
+    if (sdp == null || _disposed) return;
+    try {
+      await _signaling.sendMessage(
+        SignalingMessage(
+          type: SignalingType.answer,
+          fromPeerId: _localPeerId,
+          toPeerId: _remotePeerId,
+          sdp: sdp,
+        ),
+      );
+    } catch (e) {
+      debugPrint('Answer gönderilemedi: $e');
+    }
+  }
+
+  Future<void> _handleAnswer(
+    RTCPeerConnection pc,
+    SignalingMessage message,
+  ) async {
+    if (message.sdp == null) return;
+    // Yinelenen answer'ları yoksay — aksi halde "wrong state" hatası olur.
+    if (_remoteDescriptionSet) return;
+
+    try {
+      await pc.setRemoteDescription(
+        RTCSessionDescription(message.sdp, 'answer'),
+      );
+      _remoteDescriptionSet = true;
+      _stopOfferRetry();
+      await _flushPendingCandidates();
+    } catch (e) {
+      debugPrint('Answer işlenemedi: $e');
     }
   }
 
@@ -257,6 +363,8 @@ class WebRtcService {
   Future<void> dispose() async {
     if (_disposed) return;
     _disposed = true;
+
+    _stopOfferRetry();
 
     _peerConnection?.onIceCandidate = null;
     _peerConnection?.onConnectionState = null;

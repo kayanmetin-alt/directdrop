@@ -5,6 +5,7 @@ import 'package:firebase_database/firebase_database.dart';
 import 'package:flutter/foundation.dart';
 
 import '../models/signaling_message.dart';
+import '../utils/room_code_generator.dart';
 import 'firebase_auth_service.dart';
 
 typedef SignalingCallback = FutureOr<void> Function(SignalingMessage message);
@@ -18,6 +19,11 @@ class FirebaseSignalingService {
   StreamSubscription<DatabaseEvent>? _roomStatusSubscription;
   DatabaseReference? _roomRef;
 
+  // Sinyal mesajlarını sıralı işlemek ve çift işlemeyi önlemek için.
+  SignalingCallback? _onMessage;
+  final Set<String> _processedKeys = {};
+  Future<void> _dispatchChain = Future<void>.value();
+
   DatabaseReference get _rooms => _database.ref('rooms');
 
   Future<String> createRoom({
@@ -27,40 +33,84 @@ class FirebaseSignalingService {
     required String persistentDeviceId,
   }) async {
     final hostAuthUid = await FirebaseAuthService.instance.requireUid();
-    _roomRef = _rooms.child(roomCode);
-    try {
-      final existing = await _roomRef!.get();
-      if (existing.exists && existing.value is Map) {
-        final data = Map<String, dynamic>.from(existing.value as Map);
-        final status = data['status'] as String?;
-        if (status == 'closed' || status == 'connected') {
-          try {
-            await _roomRef!.remove();
-          } catch (e) {
-            debugPrint('Eski oda silinemedi ($roomCode): $e');
-          }
-        }
-      }
+    var code = roomCode.trim().toUpperCase();
 
-      await _roomRef!.set({
-        'createdAt': ServerValue.timestamp,
-        'hostPeerId': hostPeerId,
-        'hostDeviceName': deviceName,
-        'hostPersistentId': persistentDeviceId,
-        'hostAuthUid': hostAuthUid,
-        'allowedUids': {hostAuthUid: true},
-        'status': 'waiting',
-      });
-      return roomCode;
-    } on FirebaseException catch (e) {
-      if (e.code == 'permission-denied') {
-        throw StateError(
-          'Oda oluşturulamadı. Firebase oturumu veya kuralları hatalı. '
-          'Uygulamayı kapatıp yeniden açın.',
-        );
+    for (var attempt = 0; attempt < 4; attempt++) {
+      if (attempt > 0) {
+        code = RoomCodeGenerator.generate();
       }
-      debugPrint('createRoom Firebase hatası: ${e.code} ${e.message}');
-      rethrow;
+      _roomRef = _rooms.child(code);
+      try {
+        await _prepareRoomSlot(
+          ref: _roomRef!,
+          hostAuthUid: hostAuthUid,
+          persistentDeviceId: persistentDeviceId,
+        );
+        await _roomRef!.set({
+          'createdAt': ServerValue.timestamp,
+          'hostPeerId': hostPeerId,
+          'hostDeviceName': deviceName,
+          'hostPersistentId': persistentDeviceId,
+          'hostAuthUid': hostAuthUid,
+          'allowedUids': {hostAuthUid: true},
+          'status': 'waiting',
+        });
+        return code;
+      } on FirebaseException catch (e) {
+        if (e.code == 'permission-denied' && attempt < 3) {
+          debugPrint(
+            'createRoom izin reddedildi ($code), yeni kod deneniyor…',
+          );
+          continue;
+        }
+        if (e.code == 'permission-denied') {
+          throw StateError(
+            'Oda oluşturulamadı. Uygulamayı kapatıp yeniden açın; '
+            'olmazsa QR ile yeniden eşleşin.',
+          );
+        }
+        debugPrint('createRoom Firebase hatası: ${e.code} ${e.message}');
+        rethrow;
+      }
+    }
+
+    throw StateError('Oda oluşturulamadı. Lütfen tekrar deneyin.');
+  }
+
+  Future<void> _prepareRoomSlot({
+    required DatabaseReference ref,
+    required String hostAuthUid,
+    required String persistentDeviceId,
+  }) async {
+    final existing = await ref.get();
+    if (!existing.exists || existing.value is! Map) return;
+
+    final data = Map<String, dynamic>.from(existing.value as Map);
+    final status = data['status'] as String?;
+    final existingHostUid = data['hostAuthUid'] as String?;
+    final existingHostPersistent = data['hostPersistentId'] as String?;
+    final allowed = data['allowedUids'];
+    final allowedSelf = allowed is Map &&
+        Map<String, dynamic>.from(allowed)[hostAuthUid] == true;
+
+    final canReuse = existingHostUid == hostAuthUid ||
+        existingHostPersistent == persistentDeviceId ||
+        allowedSelf ||
+        status == 'closed' ||
+        status == 'connected';
+
+    if (!canReuse) {
+      throw FirebaseException(
+        plugin: 'firebase_database',
+        code: 'permission-denied',
+        message: 'Oda kodu başka bir oturuma ait.',
+      );
+    }
+
+    try {
+      await ref.remove();
+    } catch (e) {
+      debugPrint('Eski oda silinemedi (${ref.path}): $e');
     }
   }
 
@@ -200,24 +250,41 @@ class FirebaseSignalingService {
     required SignalingCallback onMessage,
   }) {
     _roomRef ??= _rooms.child(roomCode);
+    _onMessage = onMessage;
     _messagesSubscription?.cancel();
     _messagesSubscription = _roomRef!
         .child('signaling')
         .child(localPeerId)
         .onChildAdded
         .listen((event) {
-      final value = event.snapshot.value;
-      if (value is! Map) return;
+      _enqueue(event.snapshot);
+    });
+  }
 
-      final message = SignalingMessage.fromJson(value);
-      onMessage(message);
+  /// Mesajları sırayla, çift işlemeden ele alır; işlenince Firebase'den siler.
+  void _enqueue(DataSnapshot snapshot) {
+    final key = snapshot.key;
+    if (key == null) return;
+    final value = snapshot.value;
+    if (value is! Map) return;
+    if (_processedKeys.contains(key)) return;
+    _processedKeys.add(key);
 
-      // İşlenen mesajı temizle — Realtime DB şişmesin.
-      event.snapshot.ref.remove();
+    final message = SignalingMessage.fromJson(value);
+    _dispatchChain = _dispatchChain.then((_) async {
+      try {
+        await _onMessage?.call(message);
+      } catch (e) {
+        debugPrint('Sinyal mesajı işlenemedi: $e');
+      }
+      try {
+        await snapshot.ref.remove();
+      } catch (_) {}
     });
   }
 
   Future<void> clearSignaling() async {
+    _processedKeys.clear();
     await _roomRef?.child('signaling').remove();
   }
 
@@ -226,25 +293,17 @@ class FirebaseSignalingService {
     required SignalingCallback onMessage,
   }) async {
     if (_roomRef == null) return;
+    _onMessage = onMessage;
 
     final snapshot =
         await _roomRef!.child('signaling').child(localPeerId).get();
-    if (!snapshot.exists || snapshot.value is! Map) return;
-
-    final children = Map<String, dynamic>.from(snapshot.value as Map);
-    for (final entry in children.entries) {
-      final value = entry.value;
-      if (value is! Map) continue;
-
-      final message =
-          SignalingMessage.fromJson(Map<String, dynamic>.from(value));
-      await onMessage(message);
-      await _roomRef!
-          .child('signaling')
-          .child(localPeerId)
-          .child(entry.key)
-          .remove();
+    if (snapshot.exists && snapshot.value is Map) {
+      for (final child in snapshot.children) {
+        _enqueue(child);
+      }
     }
+    // Kuyruktaki tüm mesajların işlenmesini bekle.
+    await _dispatchChain;
   }
 
   Future<void> notifyPeerDeparted({
@@ -287,5 +346,7 @@ class FirebaseSignalingService {
     await _roomStatusSubscription?.cancel();
     _roomStatusSubscription = null;
     _roomRef = null;
+    _onMessage = null;
+    _processedKeys.clear();
   }
 }

@@ -172,6 +172,107 @@ class DeviceRegistryService {
     });
   }
 
+  DatabaseReference reconnectRequestsRef(String deviceId) =>
+      _devices.child(deviceId).child('reconnectRequests');
+
+  /// Karşı cihazdan oda açmasını ister (QR tarama / listeden dokunma).
+  Future<void> sendReconnectRequest({
+    required String targetDeviceId,
+    required String fromDeviceId,
+    required String fromDeviceName,
+  }) async {
+    final fromAuthUid = await FirebaseAuthService.instance.requireUid();
+    final ref = reconnectRequestsRef(targetDeviceId).child(fromDeviceId);
+    try {
+      await ref.remove();
+    } catch (_) {}
+    final createdAt = DateTime.now().millisecondsSinceEpoch;
+    await ref.set({
+      'fromDeviceName': fromDeviceName,
+      'fromAuthUid': fromAuthUid,
+      'clientCreatedAt': createdAt,
+    });
+
+    if (Platform.isIOS || Platform.isAndroid) {
+      try {
+        await sendWakeRequest(
+          targetDeviceId: targetDeviceId,
+          request: WakeRequest(
+            roomCode: '',
+            fromDeviceId: fromDeviceId,
+            fromDeviceName: fromDeviceName,
+            type: WakeRequestType.reconnect,
+            createdAt: createdAt,
+          ),
+        );
+      } catch (e) {
+        debugPrint('Yeniden bağlanma uyandırma gönderilemedi: $e');
+      }
+    }
+  }
+
+  Future<void> sendReconnectRejection({
+    required String targetDeviceId,
+    required String fromDeviceId,
+    required String fromDeviceName,
+  }) async {
+    final fromAuthUid = await FirebaseAuthService.instance.requireUid();
+    final ref = _pairInvites.child(targetDeviceId).child(fromDeviceId);
+    try {
+      await ref.remove();
+    } catch (_) {}
+    await ref.set({
+      'rejected': true,
+      'fromDeviceId': fromDeviceId,
+      'fromDeviceName': fromDeviceName,
+      'fromAuthUid': fromAuthUid,
+      'clientCreatedAt': DateTime.now().millisecondsSinceEpoch,
+    });
+  }
+
+  Future<void> clearReconnectRequest({
+    required String targetDeviceId,
+    required String fromDeviceId,
+  }) async {
+    try {
+      await reconnectRequestsRef(targetDeviceId).child(fromDeviceId).remove();
+    } catch (e) {
+      debugPrint('Yeniden bağlanma isteği silinemedi: $e');
+    }
+  }
+
+  DatabaseReference peerDepartedRef(String deviceId) =>
+      _devices.child(deviceId).child('peerDeparted');
+
+  /// Karşı cihaza "ben ayrıldım" sinyali — WebRTC'den bağımsız, güvenilir çıkış.
+  Future<void> sendPeerDeparted({
+    required String targetDeviceId,
+    required String fromDeviceId,
+    required String fromDeviceName,
+  }) async {
+    final fromAuthUid = await FirebaseAuthService.instance.requireUid();
+    final ref = peerDepartedRef(targetDeviceId).child(fromDeviceId);
+    try {
+      await ref.remove();
+    } catch (_) {}
+    await ref.set({
+      'fromDeviceName': fromDeviceName,
+      'fromAuthUid': fromAuthUid,
+      'clientCreatedAt': DateTime.now().millisecondsSinceEpoch,
+    });
+  }
+
+  Future<void> clearPeerDeparted({
+    required String myDeviceId,
+    required String fromDeviceId,
+  }) async {
+    try {
+      await peerDepartedRef(myDeviceId).child(fromDeviceId).remove();
+    } catch (e) {
+      debugPrint('Ayrılma sinyali silinemedi: $e');
+    }
+  }
+
   /// Eski / çift tıklama davetlerini temizler.
   Future<void> clearPairInvitesBetween({
     required String myDeviceId,
@@ -193,19 +294,28 @@ class DeviceRegistryService {
   }) async {
     final fromAuthUid = await FirebaseAuthService.instance.requireUid();
     final ref = _pairInvites.child(targetDeviceId).child(fromDeviceId);
-    try {
-      await ref.remove();
-    } catch (e) {
-      debugPrint('Eski davet silinemedi (devam): $e');
-    }
-    await ref.set({
+    final payload = {
       'roomCode': roomCode,
       'fromDeviceId': fromDeviceId,
       'fromDeviceName': fromDeviceName,
       'fromAuthUid': fromAuthUid,
       'createdAt': ServerValue.timestamp,
       'clientCreatedAt': DateTime.now().millisecondsSinceEpoch,
-    });
+    };
+
+    try {
+      await ref.remove();
+    } catch (e) {
+      debugPrint('Eski davet silinemedi (devam): $e');
+    }
+
+    try {
+      await ref.set(payload);
+    } on FirebaseException catch (e) {
+      if (e.code != 'permission-denied') rethrow;
+      debugPrint('Davet set reddedildi, update deneniyor: $e');
+      await ref.update(payload);
+    }
   }
 
   /// Bu cihaza gelen tüm yeniden bağlanma davetlerini siler (çökme sonrası).

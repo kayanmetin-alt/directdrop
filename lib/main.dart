@@ -9,6 +9,9 @@ import 'package:flutter/material.dart';
 
 import 'firebase_options.dart';
 import 'screens/home_screen.dart';
+import 'screens/incoming_connect_screen.dart';
+import 'screens/incoming_reconnect_screen.dart';
+import 'screens/recent_connect_screen.dart';
 import 'services/app_version_service.dart';
 import 'services/download_directory_service.dart';
 import 'services/firebase_auth_service.dart';
@@ -17,10 +20,14 @@ import 'services/paired_devices_service.dart';
 import 'services/session_cleanup_service.dart';
 import 'services/active_session_registry.dart';
 import 'services/paired_auto_connect_service.dart';
+import 'services/persistent_invite_code_service.dart';
 import 'services/recent_connection_service.dart';
 import 'services/screen_wake_service.dart';
 import 'services/transfer_history_service.dart';
-import 'screens/recent_connect_screen.dart';
+import 'services/wake_listener_service.dart';
+import 'utils/directdrop_scroll_behavior.dart';
+import 'models/reconnect_request.dart';
+import 'models/paired_device.dart';
 
 final GlobalKey<NavigatorState> rootNavigatorKey = GlobalKey<NavigatorState>();
 
@@ -66,7 +73,9 @@ Future<void> main() async {
       unawaited(AppVersionService.instance.load());
       unawaited(_startBackgroundServices());
       _wireAutoReconnect();
+      _wireIncomingReconnect();
       _wireNotificationWake();
+      _wireWakeListener();
     }
   } catch (e, stack) {
     startupError = 'Uygulama başlatılamadı: $e';
@@ -84,7 +93,10 @@ Future<void> _startBackgroundServices() async {
     if (Platform.isIOS || Platform.isAndroid) {
       await ScreenWakeService.instance.load();
     }
+    unawaited(PersistentInviteCodeService.instance.getOrCreate());
     await RecentConnectionService.instance.ensureListening();
+    unawaited(PairedAutoConnectService.instance.ensureRunning());
+    unawaited(WakeListenerService.instance.ensureRunning());
   } catch (e, stack) {
     debugPrint('Arka plan servisleri başlatılamadı: $e\n$stack');
   }
@@ -92,8 +104,67 @@ Future<void> _startBackgroundServices() async {
 
 void _wireNotificationWake() {
   NotificationService.instance.onWakeNotificationTapped = (request) {
-    unawaited(PairedAutoConnectService.instance.handleIncomingWake(request));
+    if (request.type == WakeRequestType.reconnect) return;
+    _openIncomingConnect(request);
   };
+}
+
+void _wireWakeListener() {
+  WakeListenerService.instance.setHandler((request) {
+    if (request.type == WakeRequestType.reconnect) return;
+    _openIncomingConnect(request);
+  });
+}
+
+void _wireIncomingReconnect() {
+  NotificationService.instance.onReconnectPushReceived = (request) {
+    unawaited(RecentConnectionService.instance.promptIncomingReconnect(request));
+  };
+
+  NotificationService.instance.onReconnectNotificationTapped = (request) {
+    RecentConnectionService.instance.promptIncomingReconnect(request);
+    _openIncomingReconnect(request);
+  };
+
+  NotificationService.instance.onReconnectNotificationApproved = (request) {
+    RecentConnectionService.instance.promptIncomingReconnect(request);
+    _openIncomingReconnect(request, autoApprove: true);
+  };
+
+  NotificationService.instance.onReconnectNotificationRejected = (request) {
+    unawaited(
+      RecentConnectionService.instance.rejectIncomingReconnectRequest(request),
+    );
+  };
+}
+
+void _openIncomingReconnect(
+  ReconnectRequest request, {
+  PairedDevice? peer,
+  bool autoApprove = false,
+}) {
+  final nav = rootNavigatorKey.currentState;
+  if (nav == null) return;
+
+  nav.push(
+    MaterialPageRoute<void>(
+      builder: (_) => IncomingReconnectScreen(
+        request: request,
+        peer: peer,
+        autoApprove: autoApprove,
+      ),
+    ),
+  );
+}
+
+void _openIncomingConnect(WakeRequest request) {
+  final nav = rootNavigatorKey.currentState;
+  if (nav == null) return;
+  nav.push(
+    MaterialPageRoute<void>(
+      builder: (_) => IncomingConnectScreen(request: request),
+    ),
+  );
 }
 
 void _wireAutoReconnect() {
@@ -142,6 +213,7 @@ class _DirectDropAppState extends State<DirectDropApp> with WidgetsBindingObserv
         }),
       );
       unawaited(RecentConnectionService.instance.ensureListening());
+      unawaited(WakeListenerService.instance.ensureRunning());
     } else if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached) {
       unawaited(SessionCleanupService.instance.markGracefulShutdown());
@@ -159,6 +231,9 @@ class _DirectDropAppState extends State<DirectDropApp> with WidgetsBindingObserv
       navigatorKey: rootNavigatorKey,
       title: 'DirectDrop',
       debugShowCheckedModeBanner: false,
+      scrollBehavior: Platform.isAndroid
+          ? const DirectDropScrollBehavior()
+          : null,
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF2563EB)),
         useMaterial3: true,

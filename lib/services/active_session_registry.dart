@@ -10,6 +10,14 @@ class ActiveSessionRegistry {
 
   TransferSessionController? _controller;
 
+  TransferSessionController? get activeController {
+    final controller = _controller;
+    if (controller == null || controller.isDisposed) return null;
+    return controller;
+  }
+
+  bool get hasActiveSession => activeController != null;
+
   void register(TransferSessionController controller) {
     _controller = controller;
   }

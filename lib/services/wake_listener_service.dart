@@ -4,8 +4,10 @@ import 'dart:io';
 import 'package:firebase_database/firebase_database.dart';
 
 import '../models/paired_device.dart';
+import '../models/reconnect_request.dart';
 import 'device_identity_service.dart';
 import 'notification_service.dart';
+import 'recent_connection_service.dart';
 
 typedef WakeRequestHandler = void Function(WakeRequest request);
 
@@ -75,6 +77,17 @@ class WakeListenerService {
 
     final request = WakeRequest.fromMap(value);
     if (DateTime.now().millisecondsSinceEpoch - request.createdAt > 120000) {
+      return;
+    }
+
+    if (request.type == WakeRequestType.reconnect) {
+      await RecentConnectionService.instance.promptIncomingReconnect(
+        ReconnectRequest(
+          fromDeviceId: request.fromDeviceId,
+          fromDeviceName: request.fromDeviceName,
+          clientCreatedAt: request.createdAt,
+        ),
+      );
       return;
     }
 

@@ -10,6 +10,7 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 import '../models/paired_device.dart';
+import '../models/reconnect_request.dart';
 import 'device_registry_service.dart';
 
 class NotificationService {
@@ -24,6 +25,10 @@ class NotificationService {
   bool _initialized = false;
   bool _localNotificationsReady = false;
   void Function(WakeRequest request)? onWakeNotificationTapped;
+  void Function(ReconnectRequest request)? onReconnectNotificationTapped;
+  void Function(ReconnectRequest request)? onReconnectNotificationApproved;
+  void Function(ReconnectRequest request)? onReconnectNotificationRejected;
+  void Function(ReconnectRequest request)? onReconnectPushReceived;
 
   Future<void> initialize() async {
     if (_initialized) return;
@@ -50,7 +55,7 @@ class NotificationService {
           macOS: darwinInit,
         ),
         onDidReceiveNotificationResponse: (response) {
-          _handleNotificationPayload(response.payload);
+          _handleNotificationResponse(response);
         },
       );
       _localNotificationsReady = true;
@@ -83,10 +88,18 @@ class NotificationService {
 
       FirebaseMessaging.onMessage.listen((message) {
         final request = _wakeFromFcmData(message.data);
-        if (request != null) {
-          showWakeNotification(request);
-          onWakeNotificationTapped?.call(request);
+        if (request == null) return;
+        if (request.type == WakeRequestType.reconnect) {
+          final reconnect = ReconnectRequest(
+            fromDeviceId: request.fromDeviceId,
+            fromDeviceName: request.fromDeviceName,
+            clientCreatedAt: request.createdAt,
+          );
+          onReconnectPushReceived?.call(reconnect);
+          return;
         }
+        showWakeNotification(request);
+        onWakeNotificationTapped?.call(request);
       });
 
       FirebaseMessaging.onMessageOpenedApp.listen((message) {
@@ -130,16 +143,64 @@ class NotificationService {
   }
 
   WakeRequest? _wakeFromFcmData(Map<String, dynamic> data) {
+    final typeRaw = data['type'] as String? ?? 'connect';
+    if (typeRaw == 'reconnect') {
+      final fromId = data['fromDeviceId'] as String? ?? '';
+      if (fromId.isEmpty) return null;
+      return WakeRequest(
+        roomCode: '',
+        fromDeviceId: fromId,
+        fromDeviceName: data['fromDeviceName'] as String? ?? 'Cihaz',
+        type: WakeRequestType.reconnect,
+        createdAt: int.tryParse(data['createdAt']?.toString() ?? '') ??
+            DateTime.now().millisecondsSinceEpoch,
+      );
+    }
+
     final roomCode = data['roomCode'] as String?;
     if (roomCode == null || roomCode.isEmpty) return null;
     return WakeRequest(
       roomCode: roomCode,
       fromDeviceId: data['fromDeviceId'] as String? ?? '',
       fromDeviceName: data['fromDeviceName'] as String? ?? 'Cihaz',
-      type: data['type'] == 'file_request'
+      type: typeRaw == 'file_request'
           ? WakeRequestType.fileRequest
           : WakeRequestType.connect,
       createdAt: int.tryParse(data['createdAt']?.toString() ?? '') ??
+          DateTime.now().millisecondsSinceEpoch,
+    );
+  }
+
+  void _handleNotificationResponse(NotificationResponse response) {
+    final payload = response.payload;
+    if (payload == null || payload.isEmpty) return;
+
+    if (payload.startsWith('reconnect|')) {
+      final request = _reconnectFromPayload(payload);
+      if (request == null) return;
+      switch (response.actionId) {
+        case 'approve':
+          onReconnectNotificationApproved?.call(request);
+          return;
+        case 'reject':
+          onReconnectNotificationRejected?.call(request);
+          return;
+        default:
+          onReconnectNotificationTapped?.call(request);
+          return;
+      }
+    }
+
+    _handleNotificationPayload(payload);
+  }
+
+  ReconnectRequest? _reconnectFromPayload(String payload) {
+    final parts = payload.split('|');
+    if (parts.length < 3 || parts[0] != 'reconnect') return null;
+    return ReconnectRequest(
+      fromDeviceId: parts[1],
+      fromDeviceName: parts[2],
+      clientCreatedAt: int.tryParse(parts.length > 3 ? parts[3] : '') ??
           DateTime.now().millisecondsSinceEpoch,
     );
   }
@@ -158,6 +219,52 @@ class NotificationService {
       createdAt: DateTime.now().millisecondsSinceEpoch,
     );
     onWakeNotificationTapped?.call(request);
+  }
+
+  Future<void> showReconnectRequestNotification(
+    ReconnectRequest request, {
+    String? peerDisplayName,
+  }) async {
+    if (!_localNotificationsReady) return;
+
+    final name = peerDisplayName ?? request.fromDeviceName;
+    final title = '$name bağlantı kurmak istiyor';
+    const body = 'Onaylayın veya reddedin.';
+    final payload =
+        'reconnect|${request.fromDeviceId}|${request.fromDeviceName}|${request.clientCreatedAt}';
+
+    try {
+      await _local.show(
+        request.fromDeviceId.hashCode,
+        title,
+        body,
+        NotificationDetails(
+          iOS: const DarwinNotificationDetails(),
+          macOS: const DarwinNotificationDetails(),
+          android: AndroidNotificationDetails(
+            'directdrop_reconnect',
+            'DirectDrop Bağlantı İsteği',
+            importance: Importance.high,
+            priority: Priority.high,
+            actions: <AndroidNotificationAction>[
+              const AndroidNotificationAction(
+                'approve',
+                'Onayla',
+                showsUserInterface: true,
+              ),
+              const AndroidNotificationAction(
+                'reject',
+                'Reddet',
+                showsUserInterface: false,
+              ),
+            ],
+          ),
+        ),
+        payload: payload,
+      );
+    } catch (e) {
+      debugPrint('Yeniden bağlanma bildirimi gösterilemedi: $e');
+    }
   }
 
   Future<void> showWakeNotification(WakeRequest request) async {

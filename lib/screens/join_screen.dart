@@ -1,10 +1,20 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:provider/provider.dart';
 
+import '../models/paired_device.dart';
 import '../providers/transfer_session_controller.dart';
 import '../services/active_session_registry.dart';
+import '../services/persistent_invite_code_service.dart';
+import '../services/paired_auto_connect_service.dart';
+import '../services/paired_devices_service.dart';
+import '../services/recent_connection_service.dart';
+import '../utils/session_exit_helper.dart';
+import '../utils/user_facing_error.dart';
+import '../widgets/connect_waiting_panel.dart';
 import 'transfer_screen.dart';
 
 class JoinScreen extends StatefulWidget {
@@ -19,8 +29,44 @@ class _JoinScreenState extends State<JoinScreen> {
   final _formKey = GlobalKey<FormState>();
   TransferSessionController? _controller;
   String? _error;
+  String? _statusMessage;
+  String? _pendingPeerName;
   bool _scanning = false;
   bool _joinInProgress = false;
+  bool _waitingForApproval = false;
+
+  Future<void> _cancelAndGoHome() async {
+    final controller = _controller;
+    if (controller != null && !controller.isDisposed) {
+      await SessionExitHelper.leaveAndGoHome(
+        controller: controller,
+        peerDeviceId: controller.peerDeviceId,
+        context: context,
+      );
+      return;
+    }
+    if (_pendingPeerName != null) {
+      PairedDevice? peer;
+      for (final device in PairedDevicesService.instance.devices) {
+        if (device.displayName == _pendingPeerName) {
+          peer = device;
+          break;
+        }
+      }
+      if (peer != null) {
+        RecentConnectionService.instance.abandonPeerConnection(peer.deviceId);
+        await PairedAutoConnectService.instance.leavePeer(peer.deviceId);
+      }
+    }
+    if (!mounted) return;
+    setState(() {
+      _joinInProgress = false;
+      _waitingForApproval = false;
+      _statusMessage = null;
+      _pendingPeerName = null;
+    });
+    Navigator.of(context).popUntil((route) => route.isFirst);
+  }
 
   @override
   void dispose() {
@@ -37,10 +83,10 @@ class _JoinScreenState extends State<JoinScreen> {
   Future<void> _join({bool fromQr = false}) async {
     if (_joinInProgress) return;
 
+    final code = _codeController.text.trim().toUpperCase();
     if (fromQr) {
-      final code = _codeController.text.trim().toUpperCase();
       if (code.length < 6) {
-        setState(() => _error = 'QR geçersiz oda kodu içermiyor.');
+        setState(() => _error = 'QR geçersiz kod içermiyor.');
         return;
       }
     } else if (!_formKey.currentState!.validate()) {
@@ -49,21 +95,71 @@ class _JoinScreenState extends State<JoinScreen> {
 
     setState(() {
       _error = null;
+      _statusMessage = null;
+      _pendingPeerName = null;
+      _waitingForApproval = false;
       _joinInProgress = true;
-      _controller?.dispose();
-      _controller = TransferSessionController();
-      ActiveSessionRegistry.instance.register(_controller!);
     });
 
+    if (_controller != null) {
+      ActiveSessionRegistry.instance.unregister(_controller!);
+      if (!_controller!.isDisposed) {
+        await _controller!.disconnect();
+        _controller!.dispose();
+      }
+      _controller = null;
+    }
+
     try {
-      await _controller!.joinRoom(_codeController.text);
+      final lookup = await PersistentInviteCodeService.instance.lookup(code);
+      if (lookup != null) {
+        setState(() {
+          _pendingPeerName = lookup.displayName;
+          _waitingForApproval = true;
+          _statusMessage = '${lookup.displayName} cihazına istek gönderiliyor…';
+        });
+
+        final controller =
+            await RecentConnectionService.instance.connectViaDeviceInvite(
+          lookup,
+          onProgress: (message) {
+            if (!mounted) return;
+            setState(() => _statusMessage = message);
+          },
+        );
+        if (!mounted) return;
+        _controller = controller;
+        ActiveSessionRegistry.instance.register(controller);
+        setState(() {
+          _joinInProgress = false;
+          _waitingForApproval = false;
+          _statusMessage = null;
+        });
+        return;
+      }
+
+      setState(() {
+        _pendingPeerName = null;
+        _waitingForApproval = false;
+        _statusMessage = 'Odaya katılınıyor…';
+      });
+
+      _controller = TransferSessionController();
+      ActiveSessionRegistry.instance.register(_controller!);
+      await _controller!.joinRoom(code);
       if (!mounted) return;
-      setState(() => _joinInProgress = false);
+      setState(() {
+        _joinInProgress = false;
+        _statusMessage = null;
+      });
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        _error = e.toString();
+        _error = userFacingMessage(e);
         _joinInProgress = false;
+        _waitingForApproval = false;
+        _statusMessage = null;
+        _pendingPeerName = null;
         if (_controller != null) {
           ActiveSessionRegistry.instance.unregister(_controller!);
         }
@@ -95,10 +191,58 @@ class _JoinScreenState extends State<JoinScreen> {
       );
     }
 
-    if (controller != null && (_controller!.isBusy || _joinInProgress)) {
+    if (_joinInProgress && _waitingForApproval && _pendingPeerName != null) {
       return Scaffold(
-        appBar: AppBar(title: const Text('Koda Katıl')),
-        body: const Center(child: CircularProgressIndicator()),
+        appBar: AppBar(
+          title: const Text('Koda Katıl'),
+          actions: [
+            IconButton(
+              onPressed: _cancelAndGoHome,
+              icon: const Icon(Icons.close),
+              tooltip: 'İptal',
+            ),
+          ],
+        ),
+        body: SafeArea(
+          child: ConnectWaitingPanel(
+            peerDisplayName: _pendingPeerName!,
+            statusMessage: _statusMessage,
+          ),
+        ),
+      );
+    }
+
+    if (_joinInProgress) {
+      return Scaffold(
+        appBar: AppBar(
+          title: const Text('Koda Katıl'),
+          actions: [
+            IconButton(
+              onPressed: _cancelAndGoHome,
+              icon: const Icon(Icons.close),
+              tooltip: 'İptal',
+            ),
+          ],
+        ),
+        body: SafeArea(
+          child: Center(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const CircularProgressIndicator(),
+                  const SizedBox(height: 24),
+                  Text(
+                    _statusMessage ?? 'Bağlanılıyor…',
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
       );
     }
 
