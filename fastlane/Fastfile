@@ -6,18 +6,18 @@ default_platform(:android)
 begin
   require "deliver/upload_metadata"
 
-  module Deliver
-    class UploadMetadata
-      unless method_defined?(:directdrop_original_review_attachment_file)
-        alias_method :directdrop_original_review_attachment_file, :review_attachment_file
-      end
+  if defined?(::Deliver::UploadMetadata) && ::Deliver::UploadMetadata.instance_methods.include?(:review_attachment_file)
+    ::Deliver::UploadMetadata.class_eval do
+      alias_method :directdrop_original_review_attachment_file, :review_attachment_file unless method_defined?(:directdrop_original_review_attachment_file)
 
-      def review_attachment_file(version)
+      define_method(:review_attachment_file) do |version|
         directdrop_original_review_attachment_file(version)
       rescue => error
         UI.important("Review attachment kontrolü atlandı: #{error.message}")
       end
     end
+  else
+    UI.important("Deliver review_attachment_file patch uygulanmadı; hedef metod bulunamadı.")
   end
 rescue LoadError
   UI.important("Deliver metadata patch yüklenemedi; Fastlane varsayılan akışla devam edecek.")
