@@ -151,12 +151,26 @@ Alınan dosyalar:
      └──────────────────────────────────────►│
 ```
 
-## App Store hazırlığı
+## App Store & Google Play hazırlığı
 
-- Apple Developer Program üyeliği
-- Gizlilik politikası URL’si
-- App Privacy formunda: "Realtime Database yalnızca eşleştirme için kullanılır, dosya içeriği sunucuya yüklenmez"
-- Export compliance: standart şifreleme (HTTPS/WebRTC)
+Detaylı rehber: **[store/SUBMISSION.md](store/SUBMISSION.md)**
+
+| Gereksinim | Durum |
+|------------|--------|
+| Bundle ID `com.directdrop.app` | ✅ |
+| iOS APNs + push | ✅ |
+| Gizlilik politikası (`docs/privacy-policy.html`) | ✅ — GitHub Pages açın |
+| Uygulama içi link (Ana sayfa → Hakkında) | ✅ |
+| Android release signing | ⚠️ `android/key.properties` siz oluşturacaksınız |
+| Mağaza metinleri | ✅ `store/` |
+| Ekran görüntüleri / özel ikon | ❌ Sizin hazırlamanız gerekir |
+
+Gizlilik URL (Pages açınca): `https://kayanmetin-alt.github.io/directdrop/privacy-policy.html`
+
+```bash
+flutter build appbundle --release   # Play Store
+flutter build ipa --release --export-options-plist=ios/ExportOptions.plist  # App Store
+```
 
 ## Güvenlik (Firebase Auth)
 

@@ -1,0 +1,7 @@
+# Fastlane Appfile — DirectDrop
+
+app_identifier("com.directdrop.app")
+team_id("ZX94LAT88X")
+
+# Android package Play Console ile aynı
+package_name("com.directdrop.app")

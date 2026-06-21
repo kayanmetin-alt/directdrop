@@ -14,6 +14,7 @@ import 'recent_connect_screen.dart';
 import '../widgets/download_location_settings.dart';
 import '../widgets/my_device_qr_card.dart';
 import '../widgets/app_version_label.dart';
+import 'about_screen.dart';
 import 'incoming_reconnect_screen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -224,8 +225,19 @@ class _HomeScreenState extends State<HomeScreen> {
       appBar: AppBar(
         title: const Text('DirectDrop'),
         centerTitle: true,
-        actions: const [
-          Padding(
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.info_outline),
+            tooltip: 'Hakkında',
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => const AboutScreen(),
+                ),
+              );
+            },
+          ),
+          const Padding(
             padding: EdgeInsets.only(right: 16),
             child: Center(child: AppVersionLabel(compact: true)),
           ),

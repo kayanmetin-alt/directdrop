@@ -30,3 +30,8 @@ windows/installer/redist/vc_redist.x64.exe
 
 # Firebase Functions
 functions/node_modules/
+
+# Android release signing (Play Store)
+android/key.properties
+android/upload-keystore.jks
+android/**/*.jks

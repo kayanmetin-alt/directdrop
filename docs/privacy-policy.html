@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DirectDrop — Gizlilik Politikası</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 720px; margin: 2rem auto; padding: 0 1rem; line-height: 1.6; color: #1a1a1a; }
+    h1 { font-size: 1.5rem; }
+    h2 { font-size: 1.1rem; margin-top: 1.5rem; }
+    a { color: #2563eb; }
+  </style>
+</head>
+<body>
+  <h1>DirectDrop Gizlilik Politikası</h1>
+  <p><strong>Son güncelleme:</strong> 21 Haziran 2026</p>
+
+  <p>DirectDrop (“uygulama”), cihazlar arasında doğrudan dosya transferi sağlar. Bu politika hangi verilerin toplandığını ve nasıl kullanıldığını açıklar.</p>
+
+  <h2>Toplanan veriler</h2>
+  <ul>
+    <li><strong>Cihaz tanımlayıcısı:</strong> Eşleştirme ve yeniden bağlanma için yerel olarak oluşturulan anonim bir kimlik (Firebase Realtime Database’de saklanır).</li>
+    <li><strong>Cihaz adı:</strong> Sizin belirlediğiniz görünen ad (ör. “iPhone Metin”).</li>
+    <li><strong>Firebase Auth anonim kullanıcı kimliği:</strong> Veritabanı erişim kuralları için.</li>
+    <li><strong>FCM bildirim token’ı</strong> (mobil): Bağlantı isteği push bildirimleri için; yalnızca sizin cihazınızda saklanır ve Firebase üzerinden iletilir.</li>
+    <li><strong>Çevrimiçi durum / son görülme:</strong> Eşleşmiş cihazların birbirini bulması için.</li>
+  </ul>
+
+  <h2>Toplanmayan veriler</h2>
+  <ul>
+    <li>Transfer ettiğiniz <strong>dosya içeriği sunucuya yüklenmez</strong>. Dosyalar WebRTC ile doğrudan cihazdan cihaza gider.</li>
+    <li>Ad, e-posta veya telefon numarası toplanmaz (anonim oturum kullanılır).</li>
+    <li>Konum verisi toplanmaz.</li>
+  </ul>
+
+  <h2>Üçüncü taraf hizmetler</h2>
+  <ul>
+    <li><strong>Google Firebase</strong> (Authentication, Realtime Database, Cloud Messaging): eşleştirme, bildirim ve oturum yönetimi.</li>
+    <li><strong>Google STUN/TURN</strong> (WebRTC): bağlantı kurulumu; dosya içeriği bu sunuculardan geçmez.</li>
+  </ul>
+
+  <h2>Veri saklama ve silme</h2>
+  <p>Eşleştirme verileri Firebase’de oturum süresince tutulur. Uygulamayı kaldırmak cihazınızdaki yerel verileri siler; sunucudaki cihaz kaydı zamanla güncellenir veya silinebilir.</p>
+
+  <h2>Çocuklar</h2>
+  <p>Uygulama 13 yaş altına yönelik değildir.</p>
+
+  <h2>İletişim</h2>
+  <p>Sorularınız için: <a href="mailto:kayan.metin@gmail.com">kayan.metin@gmail.com</a></p>
+</body>
+</html>

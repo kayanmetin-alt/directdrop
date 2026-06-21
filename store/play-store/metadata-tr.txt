@@ -1,0 +1,34 @@
+# Play Store — kısa açıklama (80 karakter)
+Cihazlar arası doğrudan dosya transferi. QR ile eşleş, güvenle gönder.
+
+# Play Store — tam açıklama (4000 karakter max)
+DirectDrop ile telefon, tablet ve bilgisayarlarınız arasında internet üzerinden doğrudan dosya transferi yapın.
+
+Özellikler:
+• QR kod veya kayıtlı cihaz listesi ile bağlantı
+• WebRTC ile cihazdan cihaza aktarım — dosya içeriği sunucuya yüklenmez
+• Bağlantı isteği push bildirimi
+• Çoklu dosya seçimi ve transfer geçmişi
+
+İzinler:
+• Kamera: QR kod okutmak için
+• Bildirimler: bağlantı istekleri için
+• Depolama (eski Android): indirilen dosyalar için
+
+Gizlilik politikası: https://kayanmetin-alt.github.io/directdrop/privacy-policy.html
+Destek: kayan.metin@gmail.com
+
+# Kategori
+Productivity
+
+# İçerik derecelendirmesi
+Herkes
+
+# Gizlilik politikası URL
+https://kayanmetin-alt.github.io/directdrop/privacy-policy.html
+
+# Data safety özeti (Play Console formu için)
+- Veri toplanır: Cihaz kimliği, uygulama etkileşimleri (eşleştirme), push token
+- Veri toplanmaz: Dosya içeriği, konum, kişisel bilgiler
+- Veriler şifrelenir (HTTPS / WebRTC)
+- Kullanıcı verileri silinebilir (uygulama kaldırma)
