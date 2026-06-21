@@ -26,7 +26,7 @@ Productivity
 4+
 
 # Destek URL
-mailto:kayan.metin@gmail.com
+https://kayanmetin-alt.github.io/directdrop/support.html
 
 # Gizlilik politikası URL
 https://kayanmetin-alt.github.io/directdrop/privacy-policy.html
