@@ -9,7 +9,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Upload metadata and screenshots
+      - name: Upload metadata (text only, screenshots untouched)
         env:
           APPSTORE_KEY_ID: ${{ secrets.APPSTORE_KEY_ID }}
           APPSTORE_ISSUER_ID: ${{ secrets.APPSTORE_ISSUER_ID }}
@@ -20,4 +20,4 @@ jobs:
             exit 1
           fi
           sudo gem install fastlane -NV
-          cd fastlane && fastlane ios metadata
+          cd fastlane && fastlane ios metadata_text

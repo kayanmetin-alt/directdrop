@@ -1,1 +1,4 @@
-DirectDrop’un ilk App Store sürümü: QR kodla eşleşme, cihazdan cihaza dosya aktarımı, transfer geçmişi ve bildirim destekli bağlantı istekleri.
+• Arka planda uygulama açıkken bağlantının kopması sorunu giderildi
+• Transfer ve bildirim akışında kararlılık iyileştirmeleri
+• iPad ve iPhone arayüz düzenlemeleri
+• Genel hata düzeltmeleri ve performans iyileştirmeleri
