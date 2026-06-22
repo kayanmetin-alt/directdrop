@@ -109,6 +109,7 @@ platform :ios do
       ipa: ipa_path,
       skip_metadata: true,
       skip_screenshots: true,
+      ignore_language_directory_validation: true,
       precheck_include_in_app_purchases: false,
       submit_for_review: false
     )
@@ -129,6 +130,7 @@ platform :ios do
       submit_for_review: false,
       precheck_include_in_app_purchases: false,
       run_precheck_before_submit: false,
+      ignore_language_directory_validation: true,
       force: true
     )
   end
