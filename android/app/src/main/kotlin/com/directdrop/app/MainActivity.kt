@@ -3,6 +3,7 @@ package com.directdrop.app
 import android.app.Activity
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.os.Environment
 import android.provider.DocumentsContract
 import android.provider.OpenableColumns
@@ -44,6 +45,9 @@ class MainActivity : FlutterActivity() {
                     val path = call.argument<String>("path")
                     result.success(openDownloadsFolder(path))
                 }
+                "getDownloadsDirectory" -> {
+                    result.success(defaultDownloadsDirectory().absolutePath)
+                }
                 "openSavedFile" -> {
                     val path = call.argument<String>("path")
                     if (path.isNullOrBlank()) {
@@ -55,6 +59,39 @@ class MainActivity : FlutterActivity() {
                 else -> result.notImplemented()
             }
         }
+
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "com.directdrop.app/transfer_session"
+        ).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "startForeground" -> {
+                    startTransferForegroundService()
+                    result.success(true)
+                }
+                "stopForeground" -> {
+                    stopTransferForegroundService()
+                    result.success(true)
+                }
+                else -> result.notImplemented()
+            }
+        }
+    }
+
+    private fun startTransferForegroundService() {
+        val intent = Intent(this, TransferForegroundService::class.java)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(intent)
+        } else {
+            startService(intent)
+        }
+    }
+
+    private fun stopTransferForegroundService() {
+        val intent = Intent(this, TransferForegroundService::class.java).apply {
+            action = TransferForegroundService.ACTION_STOP
+        }
+        startService(intent)
     }
 
     private fun launchMediaPicker(result: MethodChannel.Result) {
@@ -175,11 +212,22 @@ class MainActivity : FlutterActivity() {
         return defaultDownloadsDirectory()
     }
 
+    private fun isPublicDownloadsDirectory(dir: File): Boolean {
+        val path = dir.absolutePath.replace('\\', '/')
+        if (!path.contains("/Download")) return false
+        // Uygulama özel yolu (/Android/data/.../files/Download) halka açık İndirilenler değil.
+        return !path.contains("/Android/data/")
+    }
+
     private fun openDownloadsFolder(customPath: String? = null): Boolean {
         val downloadsDir = downloadsDirectory(customPath)
         downloadsDir.mkdirs()
 
-        if (tryOpenPublicDownloadsInFilesApp(downloadsDir)) return true
+        if (isPublicDownloadsDirectory(downloadsDir) &&
+            tryOpenPublicDownloadsInFilesApp(downloadsDir)
+        ) {
+            return true
+        }
 
         val latest = downloadsDir.listFiles()
             ?.filter { it.isFile && !it.name.startsWith('.') }
@@ -190,6 +238,7 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun tryOpenPublicDownloadsInFilesApp(dir: File): Boolean {
+        if (!isPublicDownloadsDirectory(dir)) return false
         val relative = relativeDownloadPath(dir) ?: return false
 
         val docIds = listOf(
@@ -214,6 +263,14 @@ class MainActivity : FlutterActivity() {
 
     private fun relativeDownloadPath(dir: File): String? {
         val normalized = dir.absolutePath.replace('\\', '/')
+        if (normalized.contains("/Android/data/")) {
+            val marker = "/files/Download/"
+            val index = normalized.indexOf(marker)
+            if (index >= 0) {
+                return normalized.substring(index + marker.length).trim('/')
+            }
+            return null
+        }
         val marker = "/Download/"
         val index = normalized.indexOf(marker)
         if (index < 0) return null

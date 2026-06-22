@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:uuid/uuid.dart';
@@ -18,6 +19,7 @@ import '../services/firebase_auth_service.dart';
 import '../services/firebase_signaling_service.dart';
 import '../services/pair_connect_coordinator.dart';
 import '../services/paired_devices_service.dart';
+import '../services/android_transfer_foreground_service.dart';
 import '../services/screen_wake_service.dart';
 import '../services/transfer_history_service.dart';
 import '../services/webrtc_service.dart';
@@ -187,9 +189,20 @@ class TransferSessionController extends ChangeNotifier {
   String get deviceName => DeviceIdentityService.instance.displayName;
 
   void _syncScreenWake() {
+    final roomActive = _session != null && !_disposed;
+    unawaited(ScreenWakeService.instance.setRoomActive(roomActive));
     unawaited(
-      ScreenWakeService.instance.setRoomActive(_session != null && !_disposed),
+      AndroidTransferForegroundService.setActive(
+        roomActive && isPaired,
+      ),
     );
+  }
+
+  static Duration get _peerOfflineGracePeriod {
+    if (Platform.isAndroid || Platform.isIOS) {
+      return const Duration(seconds: 45);
+    }
+    return const Duration(seconds: 12);
   }
 
   Future<String> _persistentDeviceId() =>
@@ -288,6 +301,8 @@ class TransferSessionController extends ChangeNotifier {
     );
     _scheduleConnectionWatch();
     unawaited(_persistPairIfNeeded());
+    _syncScreenWake();
+    notifyListeners();
   }
 
   Future<RoomSession> joinRoom(String roomCode) async {
@@ -595,11 +610,44 @@ class TransferSessionController extends ChangeNotifier {
 
   void markBackgrounded() {
     _wasBackgrounded = true;
+    unawaited(_prepareForBackground());
+  }
+
+  Future<void> _prepareForBackground() async {
+    if (!isPaired || _peerHasLeft || _userInitiatedLeave || _disposed) return;
+
+    try {
+      await _deviceRegistry.suspendBackgroundDisconnectHandlers();
+      final peerId = peerDeviceId;
+      if (peerId != null) {
+        final myId = await _persistentDeviceId();
+        await _deviceRegistry.cancelPeerDepartedOnDisconnect(
+          targetDeviceId: peerId,
+          fromDeviceId: myId,
+        );
+      }
+    } catch (e) {
+      debugPrint('Arka plan hazırlığı: $e');
+    }
   }
 
   void onAppResumed() {
     if (!_wasBackgrounded) return;
     _wasBackgrounded = false;
+    unawaited(_restoreFromBackground());
+  }
+
+  Future<void> _restoreFromBackground() async {
+    if (_disposed || _peerHasLeft || _userInitiatedLeave) return;
+
+    try {
+      await _deviceRegistry.restoreBackgroundDisconnectHandlers();
+      if (isPaired) {
+        await _armPeerDepartureSignals();
+      }
+    } catch (e) {
+      debugPrint('Ön plana dönüş: $e');
+    }
 
     // ICE bazen kendi kendine toparlanır; hemen yeniden kurmayı bekle.
     _deferredReconnectTimer?.cancel();
@@ -696,7 +744,7 @@ class TransferSessionController extends ChangeNotifier {
       return;
     }
 
-    _peerOfflineDebounce ??= Timer(const Duration(seconds: 2), () {
+    _peerOfflineDebounce ??= Timer(_peerOfflineGracePeriod, () {
       _peerOfflineDebounce = null;
       if (!_peerHasLeft && !_userInitiatedLeave && !_disposed) {
         _markPeerHasLeft();

@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
@@ -9,6 +10,8 @@ class DownloadDirectoryService extends ChangeNotifier {
   DownloadDirectoryService._();
 
   static final DownloadDirectoryService instance = DownloadDirectoryService._();
+
+  static const _filesChannel = MethodChannel('com.directdrop.app/files');
 
   Future<void> load() async {}
 
@@ -23,6 +26,16 @@ class DownloadDirectoryService extends ChangeNotifier {
     }
 
     if (Platform.isAndroid) {
+      try {
+        final nativePath =
+            await _filesChannel.invokeMethod<String>('getDownloadsDirectory');
+        if (nativePath != null && nativePath.isNotEmpty) {
+          return Directory(nativePath);
+        }
+      } catch (e) {
+        debugPrint('Android indirme dizini alınamadı: $e');
+      }
+
       final downloads = await getDownloadsDirectory();
       if (downloads != null) {
         return Directory(p.join(downloads.path, 'DirectDrop'));
@@ -44,6 +57,10 @@ class DownloadDirectoryService extends ChangeNotifier {
       return 'Dosyalar → iPhone\'umda → DirectDrop → DirectDrop → Downloads';
     }
     if (Platform.isAndroid) {
+      final dir = await downloadsDirectory();
+      if (dir.path.contains('/Android/data/')) {
+        return 'Dosyalar → Android → DirectDrop → Download → DirectDrop';
+      }
       return 'Dosyalar → İndirilenler → DirectDrop';
     }
     if (Platform.isMacOS) {
@@ -71,18 +88,27 @@ class DownloadDirectoryService extends ChangeNotifier {
 
   /// Eski sürümlerde uygulama içi klasöre kaydedilen dosyaları taşır.
   Future<void> _migrateLegacyAndroidDownloads(Directory target) async {
-    final docs = await getApplicationDocumentsDirectory();
-    final legacy = Directory(p.join(docs.path, 'DirectDrop', 'Downloads'));
-    if (!await legacy.exists()) return;
+    final sources = <Directory>[];
 
-    await for (final entity in legacy.list()) {
-      if (entity is! File) continue;
-      final dest = File(p.join(target.path, p.basename(entity.path)));
-      if (await dest.exists()) continue;
-      try {
-        await entity.copy(dest.path);
-      } catch (e) {
-        debugPrint('Android dosya taşıma: $e');
+    final docs = await getApplicationDocumentsDirectory();
+    sources.add(Directory(p.join(docs.path, 'DirectDrop', 'Downloads')));
+
+    final appDownloads = await getDownloadsDirectory();
+    if (appDownloads != null) {
+      sources.add(Directory(p.join(appDownloads.path, 'DirectDrop')));
+    }
+
+    for (final legacy in sources) {
+      if (!await legacy.exists()) continue;
+      await for (final entity in legacy.list()) {
+        if (entity is! File) continue;
+        final dest = File(p.join(target.path, p.basename(entity.path)));
+        if (await dest.exists()) continue;
+        try {
+          await entity.copy(dest.path);
+        } catch (e) {
+          debugPrint('Android dosya taşıma: $e');
+        }
       }
     }
   }

@@ -286,6 +286,9 @@ class _DirectDropAppState extends State<DirectDropApp> with WidgetsBindingObserv
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    final activeController = ActiveSessionRegistry.instance.activeController;
+    final hasActiveSession = ActiveSessionRegistry.instance.hasActiveSession;
+
     if (state == AppLifecycleState.resumed) {
       unawaited(
         FirebaseAuthService.instance.ensureSignedIn().catchError((Object e) {
@@ -296,21 +299,28 @@ class _DirectDropAppState extends State<DirectDropApp> with WidgetsBindingObserv
       unawaited(RecentConnectionService.instance.refreshPendingReconnectRequests());
       unawaited(WakeListenerService.instance.ensureRunning());
       _retryReconnectPrompt();
-    } else if (state == AppLifecycleState.paused ||
-        state == AppLifecycleState.detached) {
-      final hasActiveSession =
-          ActiveSessionRegistry.instance.hasActiveSession;
-      if (state == AppLifecycleState.detached) {
-        // Düzenli kapanış: oturumu kapat, sonra "düzgün kapandı" işaretle.
-        RecentConnectionService.instance.stopListening();
-        unawaited(ActiveSessionRegistry.instance.disconnectActive());
-        unawaited(SessionCleanupService.instance.markGracefulShutdown());
-      } else if (!hasActiveSession) {
-        // Sadece aktif bir transfer/bağlantı yokken arka plana alınmayı
-        // "düzgün" say. Bağlantı ortasında öldürülürse işaret konmaz, böylece
-        // sonraki açılışta her şey sıfırlanır.
+      activeController?.onAppResumed();
+      return;
+    }
+
+    if (state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.paused ||
+        state == AppLifecycleState.hidden) {
+      activeController?.markBackgrounded();
+      if (state == AppLifecycleState.paused && !hasActiveSession) {
         unawaited(SessionCleanupService.instance.markGracefulShutdown());
       }
+      return;
+    }
+
+    if (state == AppLifecycleState.detached) {
+      if (hasActiveSession && Platform.isAndroid) {
+        activeController?.markBackgrounded();
+        return;
+      }
+      RecentConnectionService.instance.stopListening();
+      unawaited(ActiveSessionRegistry.instance.disconnectActive());
+      unawaited(SessionCleanupService.instance.markGracefulShutdown());
     }
   }
 

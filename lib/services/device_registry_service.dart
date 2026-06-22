@@ -80,6 +80,35 @@ class DeviceRegistryService {
     }
   }
 
+  /// Galeri / dosya görüntüleyici gibi geçici arka plana geçişte Firebase kopunca
+  /// yanlışlıkla çevrimdışı veya "ayrıldı" sinyali gitmesin.
+  Future<void> suspendBackgroundDisconnectHandlers() async {
+    final deviceId = await DeviceIdentityService.instance.getDeviceId();
+    final ref = _devices.child(deviceId);
+    try {
+      await ref.child('online').onDisconnect().cancel();
+      await ref.child('lastSeen').onDisconnect().cancel();
+    } catch (e) {
+      debugPrint('onDisconnect iptali başarısız: $e');
+    }
+    try {
+      await ref.update({
+        'online': true,
+        'lastSeen': ServerValue.timestamp,
+      });
+    } catch (e) {
+      debugPrint('Arka plan çevrimiçi durumu güncellenemedi: $e');
+    }
+  }
+
+  Future<void> restoreBackgroundDisconnectHandlers() async {
+    try {
+      await registerCurrentDevice();
+    } catch (e) {
+      debugPrint('Arka plandan dönüş kaydı başarısız: $e');
+    }
+  }
+
   void startHeartbeat() {
     _heartbeatTimer?.cancel();
     final interval = _heartbeatInterval;

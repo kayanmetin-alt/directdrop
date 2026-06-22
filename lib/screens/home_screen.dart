@@ -13,8 +13,8 @@ import '../widgets/download_location_settings.dart';
 import '../widgets/my_device_qr_card.dart';
 import '../widgets/recent_paired_devices_card.dart';
 import '../widgets/app_version_label.dart';
-import 'about_screen.dart';
 import 'incoming_reconnect_screen.dart';
+import 'settings_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -120,19 +120,15 @@ class _HomeScreenState extends State<HomeScreen> {
         centerTitle: true,
         actions: [
           IconButton(
-            icon: const Icon(Icons.info_outline),
-            tooltip: 'Hakkında',
+            icon: const Icon(Icons.settings_outlined),
+            tooltip: 'Ayarlar',
             onPressed: () {
               Navigator.of(context).push(
                 MaterialPageRoute<void>(
-                  builder: (_) => const AboutScreen(),
+                  builder: (_) => const SettingsScreen(),
                 ),
               );
             },
-          ),
-          const Padding(
-            padding: EdgeInsets.only(right: 16),
-            child: Center(child: AppVersionLabel(compact: true)),
           ),
         ],
       ),
