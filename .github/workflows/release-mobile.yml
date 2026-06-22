@@ -114,6 +114,7 @@ jobs:
         run: bash scripts/ios_ci_signing.sh
 
       - run: flutter pub get
+      - run: flutter build ios --config-only
       - run: cd ios && pod install && cd ..
       - run: flutter build ipa --release --export-options-plist=ios/ExportOptions.plist
 
