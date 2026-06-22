@@ -1,5 +1,6 @@
 #include? "Pods/Target Support Files/Pods-Runner/Pods-Runner.release.xcconfig"
 #include "Generated.xcconfig"
 
+# Yerel cihaz/test için Automatic. CI, scripts/ios_ci_signing.sh ile Manual'a geçer.
 DEVELOPMENT_TEAM=ZX94LAT88X
 CODE_SIGN_STYLE=Automatic

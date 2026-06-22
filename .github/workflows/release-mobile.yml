@@ -106,31 +106,12 @@ jobs:
         run: |
           echo "name=$(grep '^version:' pubspec.yaml | sed 's/version: //' | cut -d+ -f1)" >> "$GITHUB_OUTPUT"
 
-      - name: Install Apple certificate and profile
+      - name: Configure App Store signing
         env:
           IOS_DIST_CERT_P12_BASE64: ${{ secrets.IOS_DIST_CERT_P12_BASE64 }}
           IOS_DIST_CERT_PASSWORD: ${{ secrets.IOS_DIST_CERT_PASSWORD }}
           IOS_PROVISION_PROFILE_BASE64: ${{ secrets.IOS_PROVISION_PROFILE_BASE64 }}
-        run: |
-          if [ -z "$IOS_DIST_CERT_P12_BASE64" ]; then
-            echo "iOS imza secret'ları yok — yalnızca derleme denenecek."
-            exit 0
-          fi
-          CERT_PATH=$RUNNER_TEMP/dist.p12
-          PP_PATH=$RUNNER_TEMP/directdrop.mobileprovision
-          echo "$IOS_DIST_CERT_P12_BASE64" | base64 -d > "$CERT_PATH"
-          echo "$IOS_PROVISION_PROFILE_BASE64" | base64 -d > "$PP_PATH"
-          PROFILE_PLIST=$RUNNER_TEMP/profile.plist
-          security cms -D -i "$PP_PATH" > "$PROFILE_PLIST"
-          PROFILE_UUID=$(/usr/libexec/PlistBuddy -c 'Print UUID' "$PROFILE_PLIST")
-          KEYCHAIN=$RUNNER_TEMP/app-signing.keychain-db
-          security create-keychain -p "$IOS_DIST_CERT_PASSWORD" "$KEYCHAIN"
-          security set-keychain-settings -lut 21600 "$KEYCHAIN"
-          security unlock-keychain -p "$IOS_DIST_CERT_PASSWORD" "$KEYCHAIN"
-          security import "$CERT_PATH" -P "$IOS_DIST_CERT_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN"
-          security list-keychain -d user -s "$KEYCHAIN"
-          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
-          cp "$PP_PATH" ~/Library/MobileDevice/Provisioning\ Profiles/"$PROFILE_UUID".mobileprovision
+        run: bash scripts/ios_ci_signing.sh
 
       - run: flutter pub get
       - run: cd ios && pod install && cd ..
