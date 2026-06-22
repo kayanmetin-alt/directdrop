@@ -1,0 +1,25 @@
+name: Upload Play Store Screenshots
+
+on:
+  workflow_dispatch:
+
+jobs:
+  upload-screenshots:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Upload phone screenshots
+        env:
+          PLAY_STORE_JSON: ${{ secrets.PLAY_STORE_JSON }}
+          PLAY_STORE_TRACK: internal
+        run: |
+          if [ -z "$PLAY_STORE_JSON" ]; then
+            echo "PLAY_STORE_JSON secret yok."
+            exit 1
+          fi
+          echo "$PLAY_STORE_JSON" > /tmp/play-store.json
+          sudo gem install fastlane -NV
+          cd fastlane
+          export PLAY_STORE_JSON_PATH=/tmp/play-store.json
+          fastlane android screenshots

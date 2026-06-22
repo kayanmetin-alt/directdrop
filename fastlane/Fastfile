@@ -64,6 +64,26 @@ platform :android do
       release_status: "completed"
     )
   end
+
+  desc "Play Store ekran görüntüleri yükle"
+  lane :screenshots do
+    json_key = ENV["PLAY_STORE_JSON_PATH"]
+    UI.user_error!("PLAY_STORE_JSON_PATH tanımlı değil") if json_key.nil? || json_key.empty?
+    UI.user_error!("JSON dosyası yok: #{json_key}") unless File.exist?(json_key)
+
+    upload_to_play_store(
+      track: ENV.fetch("PLAY_STORE_TRACK", "internal"),
+      json_key: json_key,
+      package_name: "com.directdrop.app",
+      metadata_path: "./metadata/android",
+      skip_upload_aab: true,
+      skip_upload_metadata: true,
+      skip_upload_changelogs: true,
+      skip_upload_images: true,
+      skip_upload_screenshots: false,
+      release_status: "draft"
+    )
+  end
 end
 
 platform :ios do
