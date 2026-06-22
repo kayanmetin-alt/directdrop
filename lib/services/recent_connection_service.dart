@@ -10,6 +10,7 @@ import '../models/reconnect_request.dart';
 import '../providers/transfer_session_controller.dart';
 import '../utils/session_exit_helper.dart';
 import '../utils/user_facing_error.dart';
+import '../utils/session_switch_helper.dart';
 import 'device_identity_service.dart';
 import 'device_registry_service.dart';
 import 'firebase_auth_service.dart';
@@ -357,6 +358,7 @@ class RecentConnectionService extends ChangeNotifier {
     await FirebaseAuthService.instance.requireUid();
     await _registerWithTimeout();
     await _invalidateStaleReconnectState(myId, peer.deviceId);
+    await SessionSwitchHelper.prepareForPeer(peer.deviceId);
     await _coordinator.clearSession(
       myDeviceId: myId,
       peerDeviceId: peer.deviceId,

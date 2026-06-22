@@ -1,4 +1,5 @@
-• Arka planda uygulama açıkken bağlantının kopması sorunu giderildi
-• Transfer ve bildirim akışında kararlılık iyileştirmeleri
-• iPad ve iPhone arayüz düzenlemeleri
+• Ayarlardan Windows kurulum linkini paylaşma
+• Eşleşme oturumu geçişlerinde kararlılık iyileştirmeleri
+• Masaüstü ve iPad arayüz düzenlemeleri
+• Fotoğraf seçici ve QR okuyucu güncellemeleri
 • Genel hata düzeltmeleri ve performans iyileştirmeleri

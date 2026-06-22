@@ -124,11 +124,26 @@ jobs:
           path: build/ios/ipa/*.ipa
           if-no-files-found: error
 
+      - name: Upload App Store release notes
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          APPSTORE_KEY_ID: ${{ secrets.APPSTORE_KEY_ID }}
+          APPSTORE_ISSUER_ID: ${{ secrets.APPSTORE_ISSUER_ID }}
+          APPSTORE_PRIVATE_KEY: ${{ secrets.APPSTORE_PRIVATE_KEY }}
+        run: |
+          if [ -z "$APPSTORE_PRIVATE_KEY" ]; then
+            echo "App Store API secret'ları yok — release notes atlandı."
+            exit 0
+          fi
+          sudo gem install fastlane -NV
+          cd fastlane && fastlane ios metadata_text
+
       - name: Deploy to App Store Connect
         env:
           APPSTORE_KEY_ID: ${{ secrets.APPSTORE_KEY_ID }}
           APPSTORE_ISSUER_ID: ${{ secrets.APPSTORE_ISSUER_ID }}
           APPSTORE_PRIVATE_KEY: ${{ secrets.APPSTORE_PRIVATE_KEY }}
+          SUBMIT_FOR_REVIEW: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && 'true' || 'false' }}
         run: |
           if [ -z "$APPSTORE_PRIVATE_KEY" ]; then
             echo "App Store API secret'ları yok — yalnızca IPA artifact yüklendi."

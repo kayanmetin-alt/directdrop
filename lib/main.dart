@@ -30,6 +30,7 @@ import 'utils/directdrop_scroll_behavior.dart';
 import 'widgets/incoming_reconnect_prompt.dart';
 import 'models/reconnect_request.dart';
 import 'models/paired_device.dart';
+import 'dev/screenshot_capture.dart';
 
 final GlobalKey<NavigatorState> rootNavigatorKey = GlobalKey<NavigatorState>();
 
@@ -114,6 +115,10 @@ Future<void> _bootstrap() async {
   _wireNotificationWake();
   _wireWakeListener();
   await NotificationService.instance.processInitialMessage();
+
+  if (ScreenshotCapture.isEnabled) {
+    unawaited(ScreenshotCapture.runAfterBootstrap());
+  }
 }
 
 /// Hata ekranındaki "Tekrar dene" düğmesi için: Firebase'i (gerekirse) yeniden

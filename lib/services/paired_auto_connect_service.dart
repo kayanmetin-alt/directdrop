@@ -14,6 +14,7 @@ import 'active_session_registry.dart';
 import 'paired_devices_service.dart';
 import 'paired_presence_service.dart';
 import 'recent_connection_service.dart';
+import '../utils/session_switch_helper.dart';
 
 class PairedAutoConnectService extends ChangeNotifier {
   PairedAutoConnectService._();
@@ -99,9 +100,36 @@ class PairedAutoConnectService extends ChangeNotifier {
     _scheduleSync(immediate: true);
   }
 
-  Future<void> leavePeer(String peerDeviceId) async {
+  Future<void> leavePeer(String peerDeviceId, {bool notifyPeer = false}) async {
     _lastConnectAttempt[peerDeviceId] = DateTime.now();
-    await _disposeSession(peerDeviceId);
+    await _disposeSession(peerDeviceId, notifyPeer: notifyPeer);
+  }
+
+  /// Yeni eşleşmeye geçerken diğer oturumları kapatır ve karşı tarafa bildirir.
+  Future<void> disconnectAllExcept(String keepPeerDeviceId) async {
+    final wasManual = _manualSessionActive;
+    _manualSessionActive = true;
+    try {
+      for (final peerId in _sessionsByPeerId.keys.toList()) {
+        if (peerId == keepPeerDeviceId) continue;
+        await leavePeer(peerId, notifyPeer: true);
+      }
+
+      final active = ActiveSessionRegistry.instance.activeController;
+      if (active != null &&
+          active.peerDeviceId != keepPeerDeviceId &&
+          !active.isDisposed) {
+        ActiveSessionRegistry.instance.unregister(active);
+        if (active.session != null) {
+          await active.disconnect(userInitiated: true);
+        } else if (!active.isDisposed) {
+          active.dispose();
+        }
+      }
+    } finally {
+      _manualSessionActive = wasManual;
+      notifyListeners();
+    }
   }
 
   /// Oturum bittikten sonra kısa süre otomatik yeniden bağlanmayı durdur.
@@ -174,6 +202,7 @@ class PairedAutoConnectService extends ChangeNotifier {
 
     if (force) {
       _lastConnectAttempt.remove(peer.deviceId);
+      await SessionSwitchHelper.prepareForPeer(peer.deviceId);
     } else if (isConnectingTo(peer.deviceId)) {
       return;
     }
@@ -201,6 +230,8 @@ class PairedAutoConnectService extends ChangeNotifier {
     WakeRequest request,
   ) async {
     final peerId = request.fromDeviceId;
+
+    await SessionSwitchHelper.prepareForPeer(peerId);
 
     final existing = _sessionsByPeerId[peerId];
     if (existing != null) {
@@ -454,6 +485,7 @@ class PairedAutoConnectService extends ChangeNotifier {
   bool _shouldHost(String myId, String peerId) => myId.compareTo(peerId) < 0;
 
   Future<void> _hostForPeer(PairedDevice peer) async {
+    await SessionSwitchHelper.prepareForPeer(peer.deviceId);
     _lastConnectAttempt[peer.deviceId] = DateTime.now();
     _connectingPeers.add(peer.deviceId);
     notifyListeners();
@@ -474,12 +506,19 @@ class PairedAutoConnectService extends ChangeNotifier {
     }
   }
 
-  Future<void> _disposeSession(String peerId) async {
+  Future<void> _disposeSession(String peerId, {bool notifyPeer = false}) async {
     final session = _sessionsByPeerId.remove(peerId);
     _sessionStartedAt.remove(peerId);
     _lastInviteNudge.remove(peerId);
+    _connectingPeers.remove(peerId);
     if (session == null) return;
-    session.dispose();
+
+    if (notifyPeer && !session.isDisposed && session.session != null) {
+      await session.disconnect(userInitiated: true);
+    } else if (!session.isDisposed) {
+      session.dispose();
+    }
+
     _processedInviteKeys.removeWhere((key) => key.startsWith('$peerId:'));
     notifyListeners();
   }

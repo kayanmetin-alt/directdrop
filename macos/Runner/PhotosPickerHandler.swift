@@ -87,6 +87,15 @@ final class PhotosPickerHandler: NSObject, PHPickerViewControllerDelegate {
 
     NSApp.activate(ignoringOtherApps: true)
     presenter.presentAsModalWindow(picker)
+
+    DispatchQueue.main.async {
+      if let window = picker.view.window {
+        let size = NSSize(width: 1000, height: 700)
+        window.minSize = NSSize(width: 720, height: 480)
+        window.setContentSize(size)
+        window.center()
+      }
+    }
   }
 
   func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {

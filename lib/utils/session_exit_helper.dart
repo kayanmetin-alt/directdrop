@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import '../main.dart';
 import '../providers/transfer_session_controller.dart';
 import '../services/active_session_registry.dart';
-import '../services/device_registry_service.dart';
 import '../services/paired_auto_connect_service.dart';
 import '../services/recent_connection_service.dart';
 
@@ -23,14 +22,9 @@ class SessionExitHelper {
     if (controller.userInitiatedLeave || controller.peerHasLeft) return;
     if (controller.peerDeviceId != fromDeviceId) return;
 
-    // Kısa süreli arka plan / Firebase kopması olabilir; hemen kopma.
-    await Future<void>.delayed(const Duration(seconds: 5));
+    // Kısa debounce — arka plan kopmasındaki yanlış sinyaller için.
+    await Future<void>.delayed(const Duration(seconds: 2));
     if (controller.isDisposed || controller.peerHasLeft) return;
-
-    try {
-      final data = await DeviceRegistryService().readDevice(fromDeviceId);
-      if (data?['online'] == true) return;
-    } catch (_) {}
 
     await leaveAndGoHome(
       controller: controller,

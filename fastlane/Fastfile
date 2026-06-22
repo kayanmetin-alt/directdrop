@@ -131,7 +131,9 @@ platform :ios do
       skip_screenshots: true,
       ignore_language_directory_validation: true,
       precheck_include_in_app_purchases: false,
-      submit_for_review: false
+      submit_for_review: ENV.fetch("SUBMIT_FOR_REVIEW", "false") == "true",
+      automatic_release: false,
+      force: true
     )
   end
 
@@ -140,7 +142,7 @@ platform :ios do
     upload_to_app_store(
       api_key: app_store_api_key_from_env,
       app_identifier: "com.directdrop.app",
-      app_version: "1.3.1",
+      app_version: "1.3.2",
       metadata_path: "./metadata",
       screenshots_path: "./screenshots",
       skip_binary_upload: true,
@@ -160,7 +162,7 @@ platform :ios do
     upload_to_app_store(
       api_key: app_store_api_key_from_env,
       app_identifier: "com.directdrop.app",
-      app_version: "1.3.1",
+      app_version: "1.3.2",
       metadata_path: "./metadata",
       skip_binary_upload: true,
       skip_metadata: false,

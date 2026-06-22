@@ -13,6 +13,7 @@ import '../widgets/download_location_settings.dart';
 import '../widgets/my_device_qr_card.dart';
 import '../widgets/recent_paired_devices_card.dart';
 import '../widgets/app_version_label.dart';
+import '../widgets/desktop_centered_layout.dart';
 import 'incoming_reconnect_screen.dart';
 import 'settings_screen.dart';
 
@@ -138,7 +139,8 @@ class _HomeScreenState extends State<HomeScreen> {
               ? const ClampingScrollPhysics()
               : const AlwaysScrollableScrollPhysics(),
           padding: EdgeInsets.all(horizontalPadding),
-          child: Column(
+          child: DesktopCenteredLayout(
+            child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               if (reconnect != null) ...[
@@ -206,6 +208,7 @@ class _HomeScreenState extends State<HomeScreen> {
               const SizedBox(height: 16),
               const Center(child: AppVersionLabel()),
             ],
+          ),
           ),
         ),
       ),

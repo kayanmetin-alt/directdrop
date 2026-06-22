@@ -3,6 +3,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../constants/legal_urls.dart';
 import '../widgets/app_version_label.dart';
+import '../widgets/desktop_centered_layout.dart';
 
 /// App Store / Play Store için gizlilik politikası ve destek bağlantıları.
 class AboutScreen extends StatelessWidget {
@@ -35,7 +36,8 @@ class AboutScreen extends StatelessWidget {
         title: const Text('Hakkında'),
       ),
       body: SafeArea(
-        child: ListView(
+        child: DesktopCenteredLayout(
+          child: ListView(
           padding: const EdgeInsets.all(24),
           children: [
             Icon(
@@ -50,7 +52,7 @@ class AboutScreen extends StatelessWidget {
               style: theme.textTheme.headlineSmall,
             ),
             const SizedBox(height: 8),
-            const Center(child: AppVersionLabel(detailed: true)),
+            const Center(child: AppVersionLabel()),
             const SizedBox(height: 8),
             Text(
               'Cihazlar arası doğrudan dosya transferi. Dosya içeriği sunucuya '
@@ -93,6 +95,7 @@ class AboutScreen extends StatelessWidget {
               },
             ),
           ],
+        ),
         ),
       ),
     );

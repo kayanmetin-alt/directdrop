@@ -13,6 +13,7 @@ import '../services/transfer_history_service.dart';
 import '../utils/session_exit_helper.dart';
 import '../widgets/active_transfer_tile.dart';
 import '../widgets/desktop_file_drop_overlay.dart';
+import '../widgets/desktop_centered_layout.dart';
 import '../widgets/download_location_settings.dart';
 import '../widgets/transfer_room_settings_sheet.dart';
 import '../widgets/transfer_history_tile.dart';
@@ -390,7 +391,9 @@ class _TransferScreenState extends State<TransferScreen>
           body: DesktopFileDropOverlay(
             enabled: _controller.isConnected && !_sending,
             onFilesDropped: _sendPaths,
-            child: Padding(
+            child: DesktopCenteredLayout(
+              maxWidth: 820,
+              child: Padding(
               padding: const EdgeInsets.all(16),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -530,6 +533,7 @@ class _TransferScreenState extends State<TransferScreen>
             ),
           ),
         ),
+          ),
         ),
         );
       },

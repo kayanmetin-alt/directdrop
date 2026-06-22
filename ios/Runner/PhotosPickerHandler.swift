@@ -79,7 +79,12 @@ final class PhotosPickerHandler: NSObject, PHPickerViewControllerDelegate {
 
     let picker = PHPickerViewController(configuration: config)
     picker.delegate = self
-    picker.modalPresentationStyle = .formSheet
+    if UIDevice.current.userInterfaceIdiom == .pad {
+      picker.modalPresentationStyle = .formSheet
+      picker.preferredContentSize = CGSize(width: 540, height: 720)
+    } else {
+      picker.modalPresentationStyle = .pageSheet
+    }
     controller.present(picker, animated: true)
   }
 
