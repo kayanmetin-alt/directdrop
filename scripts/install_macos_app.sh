@@ -6,6 +6,17 @@ set -e
 
 cd "$(dirname "$0")/.."
 
+echo "==> macOS uygulama ikonları (kaynak: assets/branding/directdrop-app-icon-source.png)"
+ICON_SRC="assets/branding/directdrop-app-icon-source.png"
+ICON_DEST="macos/Runner/Assets.xcassets/AppIcon.appiconset"
+if [[ ! -f "$ICON_SRC" ]]; then
+  echo "Hata: $ICON_SRC bulunamadı."
+  exit 1
+fi
+for size in 16 32 64 128 256 512 1024; do
+  sips -z "$size" "$size" "$ICON_SRC" --out "$ICON_DEST/app_icon_${size}.png" >/dev/null
+done
+
 echo "==> Bağımlılıklar (Mac sürümü)"
 flutter pub get
 flutter build macos --config-only

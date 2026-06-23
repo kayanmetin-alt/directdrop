@@ -5,19 +5,20 @@ Dosya transferi, QR, WebRTC
 Cihazlar arası hızlı aktarım
 
 # App Store — tanıtım metni (4000 karakter max)
-DirectDrop ile iPhone, iPad, Android, Mac ve Windows cihazlarınız arasında internet üzerinden doğrudan dosya transferi yapın.
+DirectDrop ile iPhone ve iPad'inizden internet üzerinden doğrudan dosya transferi yapın.
 
 • QR kod veya eşleşmiş cihaz listesi ile hızlı bağlantı
 • Dosyalar sunucuya yüklenmez — WebRTC ile cihazdan cihaza gider
 • Bağlantı isteği bildirimi (uygulama kapalıyken bile)
 • Çoklu dosya gönderimi ve indirme geçmişi
+• Fotoğraf ve video gönderiminde hazırlık ilerlemesi
 
 DirectDrop yalnızca cihaz eşleştirmesi için Firebase kullanır; transfer edilen dosya içeriği sunucuya iletilmez.
 
 Gizlilik politikası: https://kayanmetin-alt.github.io/directdrop/privacy-policy.html
 
 # Anahtar kelimeler (100 karakter, virgülle)
-dosya transferi,webrtc,qr,p2p,airdrop,android,iphone,mac,windows,directdrop
+dosya transferi,webrtc,qr,p2p,airdrop,iphone,ipad,directdrop,transfer,share
 
 # Kategori
 Productivity

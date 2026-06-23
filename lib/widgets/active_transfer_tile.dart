@@ -9,10 +9,12 @@ class ActiveTransferApprovalTile extends StatelessWidget {
     super.key,
     required this.controller,
     required this.item,
+    this.compact = false,
   });
 
   final TransferSessionController controller;
   final TransferFileItem item;
+  final bool compact;
 
   String _formatBytes(int bytes) {
     if (bytes < 1024) return '$bytes B';
@@ -25,10 +27,19 @@ class ActiveTransferApprovalTile extends StatelessWidget {
     final theme = Theme.of(context);
 
     return Card(
-      margin: const EdgeInsets.symmetric(vertical: 6),
-      color: theme.colorScheme.primaryContainer.withValues(alpha: 0.35),
+      margin: EdgeInsets.symmetric(
+        vertical: compact ? 4 : 6,
+        horizontal: compact ? 0 : 0,
+      ),
+      elevation: compact ? 0 : 1,
+      color: compact
+          ? theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5)
+          : theme.colorScheme.primaryContainer.withValues(alpha: 0.35),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        padding: EdgeInsets.symmetric(
+          horizontal: compact ? 12 : 16,
+          vertical: compact ? 8 : 12,
+        ),
         child: Row(
           children: [
             Icon(

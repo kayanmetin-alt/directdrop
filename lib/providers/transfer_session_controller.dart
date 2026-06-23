@@ -23,6 +23,7 @@ import '../services/android_transfer_foreground_service.dart';
 import '../services/screen_wake_service.dart';
 import '../services/transfer_history_service.dart';
 import '../services/webrtc_service.dart';
+import '../widgets/media_prepare_overlay.dart';
 
 class TransferSessionController extends ChangeNotifier {
   TransferSessionController({
@@ -157,6 +158,16 @@ class TransferSessionController extends ChangeNotifier {
 
   Future<void> rejectIncomingFile(String fileId) async {
     await _fileTransfer?.rejectIncoming(fileId);
+  }
+
+  Future<void> acceptAllIncomingFiles() async {
+    await _fileTransfer?.acceptAllIncoming();
+    notifyListeners();
+  }
+
+  Future<void> rejectAllIncomingFiles() async {
+    await _fileTransfer?.rejectAllIncoming();
+    notifyListeners();
   }
 
   Future<void> togglePauseTransfer(String fileId) async {
@@ -896,7 +907,10 @@ class TransferSessionController extends ChangeNotifier {
     );
   }
 
-  Future<void> sendFilePaths(List<String> paths) async {
+  Future<void> sendFilePaths(
+    List<String> paths, {
+    MediaPrepareReporter? prepareReporter,
+  }) async {
     if (_fileTransfer == null) {
       throw StateError('Bağlantı henüz hazır değil.');
     }
@@ -915,7 +929,19 @@ class TransferSessionController extends ChangeNotifier {
       paths,
       preferJpeg: preferJpeg,
     );
-    await _fileTransfer!.sendFiles(prepared);
+    await _fileTransfer!.sendFiles(
+      prepared,
+      onHashProgress: prepareReporter == null
+          ? null
+          : (index, count, fraction, name) {
+              prepareReporter.reportHashProgress(
+                fileIndex: index,
+                fileCount: count,
+                fileFraction: fraction,
+                fileName: name,
+              );
+            },
+    );
     notifyListeners();
   }
 

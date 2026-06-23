@@ -19,7 +19,7 @@ class SettingsScreen extends StatelessWidget {
       body: DesktopCenteredLayout(
         child: ListView(
         children: [
-          if (Platform.isAndroid || Platform.isIOS) const WindowsDownloadSettings(),
+          if (Platform.isAndroid) const WindowsDownloadSettings(),
           ListTile(
             leading: const Icon(Icons.info_outline),
             title: const Text('Hakkında'),

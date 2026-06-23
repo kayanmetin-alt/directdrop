@@ -47,6 +47,40 @@ enum HeicJpegConverter {
   }
 }
 
+final class MediaPickerProgressSink: NSObject, FlutterStreamHandler {
+  static let shared = MediaPickerProgressSink()
+
+  private var eventSink: FlutterEventSink?
+
+  func onListen(withArguments arguments: Any?, eventSink events: @escaping FlutterEventSink) -> FlutterError? {
+    eventSink = events
+    return nil
+  }
+
+  func onCancel(withArguments arguments: Any?) -> FlutterError? {
+    eventSink = nil
+    return nil
+  }
+
+  func emitExportProgress(
+    completed: Int,
+    total: Int,
+    fraction: Double,
+    fileName: String?
+  ) {
+    var payload: [String: Any] = [
+      "phase": "exporting",
+      "completed": completed,
+      "total": max(total, 1),
+      "fraction": min(max(fraction, 0), 1),
+    ]
+    if let fileName, !fileName.isEmpty {
+      payload["fileName"] = fileName
+    }
+    eventSink?(payload)
+  }
+}
+
 /// Fotoğraflar kütüphanesinden görsel ve video seçimi (PHPicker).
 final class PhotosPickerHandler: NSObject, PHPickerViewControllerDelegate {
   static let shared = PhotosPickerHandler()
@@ -54,9 +88,21 @@ final class PhotosPickerHandler: NSObject, PHPickerViewControllerDelegate {
   private var pendingResult: FlutterResult?
   private weak var presentingController: UIViewController?
   private var preferJpegExport = false
+  private var exportCancelled = false
+  private var activeExportResult: FlutterResult?
+  private var progressObservations: [NSKeyValueObservation] = []
 
   private override init() {
     super.init()
+  }
+
+  func cancelExport() {
+    exportCancelled = true
+    progressObservations.removeAll()
+    if let result = activeExportResult {
+      activeExportResult = nil
+      result(FlutterError(code: "cancelled", message: "Medya hazırlığı iptal edildi.", details: nil))
+    }
   }
 
   func pick(
@@ -76,6 +122,9 @@ final class PhotosPickerHandler: NSObject, PHPickerViewControllerDelegate {
     var config = PHPickerConfiguration(photoLibrary: .shared())
     config.selectionLimit = 0
     config.filter = .any(of: [.images, .videos])
+    if #available(iOS 15.0, *) {
+      config.preferredAssetRepresentationMode = .current
+    }
 
     let picker = PHPickerViewController(configuration: config)
     picker.delegate = self
@@ -94,9 +143,9 @@ final class PhotosPickerHandler: NSObject, PHPickerViewControllerDelegate {
     guard let result = pendingResult else { return }
     pendingResult = nil
     presentingController = nil
-    preferJpegExport = false
 
     if results.isEmpty {
+      preferJpegExport = false
       result(nil)
       return
     }
@@ -105,11 +154,17 @@ final class PhotosPickerHandler: NSObject, PHPickerViewControllerDelegate {
   }
 
   private func exportResults(_ results: [PHPickerResult], result: @escaping FlutterResult) {
+    exportCancelled = false
+    activeExportResult = result
+    progressObservations.removeAll()
+
     let destination = uniqueExportDestination()
     var paths: [String] = []
     var seen = Set<String>()
     let lock = NSLock()
     let group = DispatchGroup()
+    let total = results.count
+    var finishedCount = 0
 
     func addPath(_ path: String) {
       lock.lock()
@@ -119,25 +174,88 @@ final class PhotosPickerHandler: NSObject, PHPickerViewControllerDelegate {
       }
     }
 
-    for pick in results {
-      let provider = pick.itemProvider
-      guard let typeId = preferredTypeIdentifier(for: provider) else { continue }
+    func emitOverall(currentIndex: Int, itemFraction: Double, fileName: String?) {
+      let overall = total == 0
+        ? 0.0
+        : (Double(currentIndex) + itemFraction) / Double(total)
+      MediaPickerProgressSink.shared.emitExportProgress(
+        completed: currentIndex,
+        total: total,
+        fraction: overall,
+        fileName: fileName
+      )
+    }
 
+    emitOverall(currentIndex: 0, itemFraction: 0, fileName: nil)
+
+    for (index, pick) in results.enumerated() {
+      if exportCancelled { break }
+
+      let provider = pick.itemProvider
+      guard let typeId = preferredTypeIdentifier(for: provider) else {
+        finishedCount += 1
+        emitOverall(currentIndex: finishedCount, itemFraction: 0, fileName: nil)
+        continue
+      }
+
+      let fileName = provider.suggestedName
       group.enter()
-      provider.loadFileRepresentation(forTypeIdentifier: typeId) { url, error in
+
+      let progressObs = provider.observe(\.progress, options: [.new, .initial]) { prov, _ in
+        guard let progress = prov.progress else { return }
+        let fraction = progress.totalUnitCount > 0
+          ? Double(progress.completedUnitCount) / Double(progress.totalUnitCount)
+          : 0
+        emitOverall(currentIndex: index, itemFraction: fraction, fileName: fileName)
+      }
+      progressObservations.append(progressObs)
+
+      provider.loadFileRepresentation(forTypeIdentifier: typeId) { [weak self] url, error in
+        progressObs.invalidate()
         defer { group.leave() }
+
+        guard let self else { return }
+        if self.exportCancelled { return }
+
         if let error {
           debugPrint("PhotosPicker: load failed \(error)")
+          lock.lock()
+          finishedCount += 1
+          let done = finishedCount
+          lock.unlock()
+          emitOverall(currentIndex: done, itemFraction: 0, fileName: fileName)
           return
         }
-        guard let url else { return }
+        guard let url else {
+          lock.lock()
+          finishedCount += 1
+          let done = finishedCount
+          lock.unlock()
+          emitOverall(currentIndex: done, itemFraction: 0, fileName: fileName)
+          return
+        }
         if let copied = self.copyLoadedFile(from: url, provider: provider, destination: destination) {
           addPath(copied.path)
         }
+        lock.lock()
+        finishedCount += 1
+        let done = finishedCount
+        lock.unlock()
+        emitOverall(currentIndex: done, itemFraction: 0, fileName: fileName)
       }
     }
 
-    group.notify(queue: .main) {
+    group.notify(queue: .main) { [weak self] in
+      guard let self else { return }
+      self.progressObservations.removeAll()
+      self.activeExportResult = nil
+      self.preferJpegExport = false
+
+      if self.exportCancelled {
+        result(FlutterError(code: "cancelled", message: "Medya hazırlığı iptal edildi.", details: nil))
+        return
+      }
+
       result(paths.isEmpty ? nil : paths)
     }
   }
@@ -239,8 +357,12 @@ final class PhotosPickerHandler: NSObject, PHPickerViewControllerDelegate {
 
 enum MediaPickerChannel {
   static let name = "com.directdrop.app/media_picker"
+  static let eventsName = "com.directdrop.app/media_picker_events"
 
   static func register(with controller: UIViewController, messenger: FlutterBinaryMessenger) {
+    let events = FlutterEventChannel(name: eventsName, binaryMessenger: messenger)
+    events.setStreamHandler(MediaPickerProgressSink.shared)
+
     let channel = FlutterMethodChannel(name: name, binaryMessenger: messenger)
     channel.setMethodCallHandler { call, result in
       switch call.method {
@@ -252,6 +374,9 @@ enum MediaPickerChannel {
           preferJpeg: preferJpeg,
           result: result
         )
+      case "cancelPhotoExport":
+        PhotosPickerHandler.shared.cancelExport()
+        result(nil)
       case "convertHeicToJpeg":
         guard let args = call.arguments as? [String: Any],
               let paths = args["paths"] as? [String]

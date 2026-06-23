@@ -47,6 +47,40 @@ enum HeicJpegConverter {
   }
 }
 
+final class MediaPickerProgressSink: NSObject, FlutterStreamHandler {
+  static let shared = MediaPickerProgressSink()
+
+  private var eventSink: FlutterEventSink?
+
+  func onListen(withArguments arguments: Any?, eventSink events: @escaping FlutterEventSink) -> FlutterError? {
+    eventSink = events
+    return nil
+  }
+
+  func onCancel(withArguments arguments: Any?) -> FlutterError? {
+    eventSink = nil
+    return nil
+  }
+
+  func emitExportProgress(
+    completed: Int,
+    total: Int,
+    fraction: Double,
+    fileName: String?
+  ) {
+    var payload: [String: Any] = [
+      "phase": "exporting",
+      "completed": completed,
+      "total": max(total, 1),
+      "fraction": min(max(fraction, 0), 1),
+    ]
+    if let fileName, !fileName.isEmpty {
+      payload["fileName"] = fileName
+    }
+    eventSink?(payload)
+  }
+}
+
 /// Fotoğraflar kütüphanesinden görsel ve video seçimi (PHPicker, macOS 13+).
 @available(macOS 13.0, *)
 final class PhotosPickerHandler: NSObject, PHPickerViewControllerDelegate {
@@ -55,9 +89,19 @@ final class PhotosPickerHandler: NSObject, PHPickerViewControllerDelegate {
   private var pendingResult: FlutterResult?
   private weak var presentingController: NSViewController?
   private var preferJpegExport = false
+  private var exportCancelled = false
+  private var activeExportResult: FlutterResult?
 
   private override init() {
     super.init()
+  }
+
+  func cancelExport() {
+    exportCancelled = true
+    if let result = activeExportResult {
+      activeExportResult = nil
+      result(FlutterError(code: "cancelled", message: "Medya hazırlığı iptal edildi.", details: nil))
+    }
   }
 
   func pick(
@@ -76,12 +120,12 @@ final class PhotosPickerHandler: NSObject, PHPickerViewControllerDelegate {
     var config = PHPickerConfiguration(photoLibrary: .shared())
     config.selectionLimit = 0
     config.filter = .any(of: [.images, .videos])
+    config.preferredAssetRepresentationMode = .current
 
     let picker = PHPickerViewController(configuration: config)
     picker.delegate = self
     picker.preferredContentSize = NSSize(width: 960, height: 640)
 
-    // Sheet, Flutter NSViewController üzerinde küçük kalıyor; modal pencere tam boyut verir.
     let presenter = NSApp.mainWindow?.contentViewController ?? controller
     presentingController = presenter
 
@@ -104,9 +148,9 @@ final class PhotosPickerHandler: NSObject, PHPickerViewControllerDelegate {
     guard let result = pendingResult else { return }
     pendingResult = nil
     presentingController = nil
-    preferJpegExport = false
 
     if results.isEmpty {
+      preferJpegExport = false
       result(nil)
       return
     }
@@ -115,11 +159,16 @@ final class PhotosPickerHandler: NSObject, PHPickerViewControllerDelegate {
   }
 
   private func exportResults(_ results: [PHPickerResult], result: @escaping FlutterResult) {
+    exportCancelled = false
+    activeExportResult = result
+
     let destination = uniqueExportDestination()
     var paths: [String] = []
     var seen = Set<String>()
     let lock = NSLock()
     let group = DispatchGroup()
+    let total = results.count
+    var finishedCount = 0
 
     func addPath(_ path: String) {
       lock.lock()
@@ -129,25 +178,78 @@ final class PhotosPickerHandler: NSObject, PHPickerViewControllerDelegate {
       }
     }
 
-    for pick in results {
-      let provider = pick.itemProvider
-      guard let typeId = preferredTypeIdentifier(for: provider) else { continue }
+    func emitOverall(currentIndex: Int, itemFraction: Double, fileName: String?) {
+      let overall = total == 0
+        ? 0.0
+        : (Double(currentIndex) + itemFraction) / Double(total)
+      MediaPickerProgressSink.shared.emitExportProgress(
+        completed: currentIndex,
+        total: total,
+        fraction: overall,
+        fileName: fileName
+      )
+    }
 
+    emitOverall(currentIndex: 0, itemFraction: 0, fileName: nil)
+
+    for (index, pick) in results.enumerated() {
+      if exportCancelled { break }
+
+      let provider = pick.itemProvider
+      guard let typeId = preferredTypeIdentifier(for: provider) else {
+        finishedCount += 1
+        emitOverall(currentIndex: finishedCount, itemFraction: 0, fileName: nil)
+        continue
+      }
+
+      let fileName = provider.suggestedName
       group.enter()
-      provider.loadFileRepresentation(forTypeIdentifier: typeId) { url, error in
+      emitOverall(currentIndex: index, itemFraction: 0, fileName: fileName)
+
+      provider.loadFileRepresentation(forTypeIdentifier: typeId) { [weak self] url, error in
         defer { group.leave() }
+
+        guard let self else { return }
+        if self.exportCancelled { return }
+
         if let error {
           debugPrint("PhotosPicker: load failed \(error)")
+          lock.lock()
+          finishedCount += 1
+          let done = finishedCount
+          lock.unlock()
+          emitOverall(currentIndex: done, itemFraction: 0, fileName: fileName)
           return
         }
-        guard let url else { return }
+        guard let url else {
+          lock.lock()
+          finishedCount += 1
+          let done = finishedCount
+          lock.unlock()
+          emitOverall(currentIndex: done, itemFraction: 0, fileName: fileName)
+          return
+        }
         if let copied = self.copyLoadedFile(from: url, provider: provider, destination: destination) {
           addPath(copied.path)
         }
+        lock.lock()
+        finishedCount += 1
+        let done = finishedCount
+        lock.unlock()
+        emitOverall(currentIndex: done, itemFraction: 0, fileName: fileName)
       }
     }
 
-    group.notify(queue: .main) {
+    group.notify(queue: .main) { [weak self] in
+      guard let self else { return }
+      self.activeExportResult = nil
+      self.preferJpegExport = false
+
+      if self.exportCancelled {
+        result(FlutterError(code: "cancelled", message: "Medya hazırlığı iptal edildi.", details: nil))
+        return
+      }
+
       result(paths.isEmpty ? nil : paths)
     }
   }
@@ -249,8 +351,12 @@ final class PhotosPickerHandler: NSObject, PHPickerViewControllerDelegate {
 
 enum MediaPickerChannel {
   static let name = "com.directdrop.app/media_picker"
+  static let eventsName = "com.directdrop.app/media_picker_events"
 
   static func register(with controller: NSViewController, messenger: FlutterBinaryMessenger) {
+    let events = FlutterEventChannel(name: eventsName, binaryMessenger: messenger)
+    events.setStreamHandler(MediaPickerProgressSink.shared)
+
     let channel = FlutterMethodChannel(name: name, binaryMessenger: messenger)
     channel.setMethodCallHandler { call, result in
       switch call.method {
@@ -269,6 +375,11 @@ enum MediaPickerChannel {
             message: "Fotoğraflar seçici macOS 13 veya üzeri gerektirir.",
             details: nil))
         }
+      case "cancelPhotoExport":
+        if #available(macOS 13.0, *) {
+          PhotosPickerHandler.shared.cancelExport()
+        }
+        result(nil)
       case "convertHeicToJpeg":
         guard #available(macOS 13.0, *) else {
           result(FlutterError(

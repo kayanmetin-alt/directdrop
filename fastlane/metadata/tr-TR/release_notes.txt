@@ -1,5 +1,5 @@
-• Ayarlardan Windows kurulum linkini paylaşma
+• Fotoğraf ve video gönderiminde hazırlık ilerlemesi ve iptal
+• Gelen dosyalar için toplu onay / reddetme
 • Eşleşme oturumu geçişlerinde kararlılık iyileştirmeleri
-• Masaüstü ve iPad arayüz düzenlemeleri
-• Fotoğraf seçici ve QR okuyucu güncellemeleri
+• iPad arayüz düzenlemeleri
 • Genel hata düzeltmeleri ve performans iyileştirmeleri

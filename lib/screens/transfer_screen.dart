@@ -11,7 +11,7 @@ import '../services/send_file_picker_service.dart';
 import '../services/webrtc_service.dart';
 import '../services/transfer_history_service.dart';
 import '../utils/session_exit_helper.dart';
-import '../widgets/active_transfer_tile.dart';
+import '../widgets/incoming_transfer_approval_panel.dart';
 import '../widgets/desktop_file_drop_overlay.dart';
 import '../widgets/desktop_centered_layout.dart';
 import '../widgets/download_location_settings.dart';
@@ -19,6 +19,7 @@ import '../widgets/transfer_room_settings_sheet.dart';
 import '../widgets/transfer_history_tile.dart';
 import '../widgets/transfer_progress_tile.dart';
 import '../widgets/app_version_label.dart';
+import '../widgets/media_prepare_overlay.dart';
 
 class TransferScreen extends StatefulWidget {
   const TransferScreen({
@@ -156,7 +157,9 @@ class _TransferScreenState extends State<TransferScreen>
     });
 
     try {
-      await _controller.sendFilePaths(paths);
+      await runMediaPrepare(context, (reporter) async {
+        await _controller.sendFilePaths(paths, prepareReporter: reporter);
+      });
     } catch (e) {
       setState(() => _error = e.toString());
     } finally {
@@ -176,16 +179,38 @@ class _TransferScreenState extends State<TransferScreen>
 
       final preferJpeg = await _controller.shouldPreferJpegForPhotos();
       if (!mounted) return;
-      final paths = await SendFilePickerService.pickWithSourceChoice(
-        context,
-        preferJpeg: preferJpeg,
-      );
 
-      if (paths == null || paths.isEmpty) {
+      if (!Platform.isIOS && !Platform.isMacOS && !Platform.isAndroid) {
+        final paths = await SendFilePickerService.pickFromDeviceStorage();
+        if (paths == null || paths.isEmpty) return;
+        if (!mounted) return;
+        await runMediaPrepare(context, (reporter) async {
+          await _controller.sendFilePaths(paths, prepareReporter: reporter);
+        });
         return;
       }
 
-      await _controller.sendFilePaths(paths);
+      final source = await SendFilePickerService.pickSource(context);
+      if (!mounted || source == null) return;
+
+      switch (source) {
+        case SendFileSource.photosLibrary:
+          if (!mounted) return;
+          await runMediaPrepare(context, (reporter) async {
+            final paths = await SendFilePickerService.pickFromPhotosLibrary(
+              preferJpeg: preferJpeg,
+            );
+            if (paths == null || paths.isEmpty) return;
+            await _controller.sendFilePaths(paths, prepareReporter: reporter);
+          });
+        case SendFileSource.deviceStorage:
+          final paths = await SendFilePickerService.pickFromDeviceStorage();
+          if (paths == null || paths.isEmpty) return;
+          if (!mounted) return;
+          await runMediaPrepare(context, (reporter) async {
+            await _controller.sendFilePaths(paths, prepareReporter: reporter);
+          });
+      }
     } catch (e) {
       setState(() => _error = e.toString());
     } finally {
@@ -302,14 +327,31 @@ class _TransferScreenState extends State<TransferScreen>
     );
   }
 
+  List<TransferFileItem> _awaitingIncomingApproval(
+    List<TransferFileItem> items,
+  ) {
+    return items
+        .where(
+          (item) =>
+              item.status == TransferStatus.awaitingApproval &&
+              item.direction == TransferDirection.receiving,
+        )
+        .toList();
+  }
+
+  List<TransferFileItem> _activeTransfersExcludingIncomingApproval(
+    List<TransferFileItem> items,
+  ) {
+    return _activeTransfers(items)
+        .where(
+          (item) =>
+              item.status != TransferStatus.awaitingApproval ||
+              item.direction != TransferDirection.receiving,
+        )
+        .toList();
+  }
+
   Widget _buildActiveTransferItem(TransferFileItem item) {
-    if (item.status == TransferStatus.awaitingApproval &&
-        item.direction == TransferDirection.receiving) {
-      return ActiveTransferApprovalTile(
-        controller: _controller,
-        item: item,
-      );
-    }
     return TransferProgressTile(
       item: item,
       onPauseToggle: item.status == TransferStatus.inProgress ||
@@ -333,7 +375,11 @@ class _TransferScreenState extends State<TransferScreen>
           return const SizedBox.shrink();
         }
         final liveTransfers = _controller.fileTransfer?.items ?? [];
-        final activeTransfers = _activeTransfers(liveTransfers);
+        final awaitingIncoming = _awaitingIncomingApproval(liveTransfers);
+        final activeTransfers =
+            _activeTransfersExcludingIncomingApproval(liveTransfers);
+        final showActiveSection =
+            awaitingIncoming.isNotEmpty || activeTransfers.isNotEmpty;
         final history = _historyEntries();
         final peerLabel =
             widget.peerDisplayName ?? _controller.peerDisplayName ?? 'Cihaz';
@@ -443,13 +489,18 @@ class _TransferScreenState extends State<TransferScreen>
                     ),
                   ),
                 ],
-                if (activeTransfers.isNotEmpty) ...[
+                if (showActiveSection) ...[
                   const SizedBox(height: 16),
                   Text(
                     'Aktif transferler',
                     style: Theme.of(context).textTheme.titleMedium,
                   ),
                   const SizedBox(height: 8),
+                  if (awaitingIncoming.isNotEmpty)
+                    IncomingTransferApprovalPanel(
+                      controller: _controller,
+                      items: awaitingIncoming,
+                    ),
                   ...activeTransfers.map(_buildActiveTransferItem),
                 ],
                 const SizedBox(height: 12),

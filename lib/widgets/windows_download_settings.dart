@@ -4,7 +4,7 @@ import 'package:share_plus/share_plus.dart';
 
 import '../constants/download_urls.dart';
 
-/// Ayarlar: Windows kurulum linkini paylaşma / kopyalama (Android / iPhone).
+/// Ayarlar: kurulum linkini paylaşma / kopyalama (yalnızca Android).
 class WindowsDownloadSettings extends StatelessWidget {
   const WindowsDownloadSettings({super.key});
 

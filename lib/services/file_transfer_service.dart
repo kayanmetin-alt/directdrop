@@ -100,9 +100,65 @@ class FileTransferService {
     }
   }
 
-  Future<void> sendFiles(List<String> filePaths) async {
-    for (final path in filePaths) {
-      await _sendFile(path);
+  Future<void> sendFiles(
+    List<String> filePaths, {
+    void Function(int fileIndex, int fileCount, double fileFraction, String fileName)?
+        onHashProgress,
+  }) async {
+    if (filePaths.isEmpty) return;
+
+    final jobs = <_OutboundFileJob>[];
+    for (var i = 0; i < filePaths.length; i++) {
+      final path = filePaths[i];
+      jobs.add(
+        await _prepareOutboundJob(
+          path,
+          onHashProgress: onHashProgress == null
+              ? null
+              : (fraction) => onHashProgress(i, filePaths.length, fraction,
+                    p.basename(path)),
+        ),
+      );
+    }
+
+    for (final job in jobs) {
+      while (!_webRtc.isDataChannelOpen) {
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      }
+
+      final readyCompleter = Completer<void>();
+      _pendingReady[job.item.id] = readyCompleter;
+      job.readyCompleter = readyCompleter;
+
+      job.item.status = TransferStatus.awaitingApproval;
+      _emit();
+
+      await _sendControl({
+        'type': 'file_start',
+        'id': job.item.id,
+        'name': job.item.name,
+        'size': job.item.size,
+        'sha256': job.item.sha256,
+        'chunkSize': chunkSize,
+      });
+    }
+
+    for (final job in jobs) {
+      await _executeOutboundTransfer(job);
+    }
+  }
+
+  Future<void> acceptAllIncoming() async {
+    final ids = _pendingIncoming.keys.toList(growable: false);
+    for (final id in ids) {
+      await acceptIncoming(id);
+    }
+  }
+
+  Future<void> rejectAllIncoming() async {
+    final ids = _pendingIncoming.keys.toList(growable: false);
+    for (final id in ids) {
+      await rejectIncoming(id);
     }
   }
 
@@ -230,7 +286,10 @@ class FileTransferService {
     }
   }
 
-  Future<void> _sendFile(String filePath) async {
+  Future<_OutboundFileJob> _prepareOutboundJob(
+    String filePath, {
+    void Function(double fraction)? onHashProgress,
+  }) async {
     final file = File(filePath);
     if (!await file.exists()) {
       throw StateError('Dosya bulunamadı: $filePath');
@@ -239,7 +298,10 @@ class FileTransferService {
     final stat = await file.stat();
     final fileId = _uuid.v4();
     final name = p.basename(filePath);
-    final sha256 = await FileHasher.sha256File(filePath);
+    final sha256 = await FileHasher.sha256File(
+      filePath,
+      onProgress: onHashProgress,
+    );
 
     final item = TransferFileItem(
       id: fileId,
@@ -248,28 +310,30 @@ class FileTransferService {
       direction: TransferDirection.sending,
       localPath: filePath,
       sha256: sha256,
-      status: TransferStatus.inProgress,
+      status: TransferStatus.pending,
     );
     _items.add(item);
     _emit();
 
-    while (!_webRtc.isDataChannelOpen) {
-      await Future<void>.delayed(const Duration(milliseconds: 100));
+    return _OutboundFileJob(
+      file: file,
+      item: item,
+      size: stat.size,
+    );
+  }
+
+  Future<void> _executeOutboundTransfer(_OutboundFileJob job) async {
+    final fileId = job.item.id;
+    final item = job.item;
+    final file = job.file;
+    final statSize = job.size;
+    final readyCompleter = job.readyCompleter;
+
+    if (readyCompleter == null) {
+      throw StateError('Gönderim hazırlığı eksik: $fileId');
     }
 
-    final readyCompleter = Completer<void>();
-    _pendingReady[fileId] = readyCompleter;
-
     try {
-      await _sendControl({
-        'type': 'file_start',
-        'id': fileId,
-        'name': name,
-        'size': stat.size,
-        'sha256': sha256,
-        'chunkSize': chunkSize,
-      });
-
       await readyCompleter.future.timeout(
         const Duration(seconds: 120),
         onTimeout: () => throw TimeoutException(
@@ -277,14 +341,17 @@ class FileTransferService {
         ),
       );
 
+      item.status = TransferStatus.inProgress;
+      _emit();
+
       final raf = await file.open(mode: FileMode.read);
       try {
         var offset = 0;
         var chunkIndex = 0;
-        while (offset < stat.size) {
+        while (offset < statSize) {
           await _waitWhilePausedOrCancelled(fileId);
 
-          final remaining = stat.size - offset;
+          final remaining = statSize - offset;
           final readSize = remaining < chunkSize ? remaining : chunkSize;
           final buffer = Uint8List(readSize);
           await raf.readInto(buffer);
@@ -556,6 +623,19 @@ class FileTransferService {
     _receiveContexts.clear();
     await _transfersController.close();
   }
+}
+
+class _OutboundFileJob {
+  _OutboundFileJob({
+    required this.file,
+    required this.item,
+    required this.size,
+  });
+
+  final File file;
+  final TransferFileItem item;
+  final int size;
+  Completer<void>? readyCompleter;
 }
 
 class _PendingIncomingFile {

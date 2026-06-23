@@ -24,7 +24,7 @@ class SendFilePickerService {
       return _pickFromDeviceStorage();
     }
 
-    final source = await _showSourceSheet(context);
+    final source = await pickSource(context);
     if (source == null) return null;
 
     switch (source) {
@@ -34,6 +34,9 @@ class SendFilePickerService {
         return _pickFromDeviceStorage();
     }
   }
+
+  static Future<SendFileSource?> pickSource(BuildContext context) =>
+      _showSourceSheet(context);
 
   static Future<SendFileSource?> _showSourceSheet(BuildContext context) {
     if (Platform.isMacOS) {
@@ -96,6 +99,13 @@ class SendFilePickerService {
     );
   }
 
+  static Future<List<String>?> pickFromPhotosLibrary({
+    bool preferJpeg = false,
+  }) =>
+      _pickFromPhotosLibrary(preferJpeg: preferJpeg);
+
+  static Future<List<String>?> pickFromDeviceStorage() => _pickFromDeviceStorage();
+
   static Future<List<String>?> _pickFromPhotosLibrary({
     bool preferJpeg = false,
   }) async {
@@ -107,6 +117,7 @@ class SendFilePickerService {
       if (result == null || result.isEmpty) return null;
       return result.whereType<String>().where((path) => path.isNotEmpty).toList();
     } on PlatformException catch (e) {
+      if (e.code == 'cancelled') return null;
       throw StateError(e.message ?? 'Fotoğraflar seçilemedi.');
     }
   }

@@ -10,6 +10,7 @@ import android.provider.OpenableColumns
 import androidx.core.content.FileProvider
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodChannel
 import java.io.File
 import java.io.FileOutputStream
@@ -22,9 +23,25 @@ import java.util.concurrent.Executors
 class MainActivity : FlutterActivity() {
     private val mediaExecutor = Executors.newSingleThreadExecutor()
     private var mediaPickerResult: MethodChannel.Result? = null
+    private var activeExportResult: MethodChannel.Result? = null
+    private var exportCancelled = false
+    private var eventSink: EventChannel.EventSink? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+
+        EventChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "com.directdrop.app/media_picker_events"
+        ).setStreamHandler(object : EventChannel.StreamHandler {
+            override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
+                eventSink = events
+            }
+
+            override fun onCancel(arguments: Any?) {
+                eventSink = null
+            }
+        })
 
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
@@ -32,6 +49,12 @@ class MainActivity : FlutterActivity() {
         ).setMethodCallHandler { call, result ->
             when (call.method) {
                 "pickFromPhotos" -> launchMediaPicker(result)
+                "cancelPhotoExport" -> {
+                    exportCancelled = true
+                    activeExportResult?.error("cancelled", "Medya hazırlığı iptal edildi.", null)
+                    activeExportResult = null
+                    result.success(null)
+                }
                 else -> result.notImplemented()
             }
         }
@@ -78,6 +101,26 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    private fun emitExportProgress(
+        completed: Int,
+        total: Int,
+        fraction: Double,
+        fileName: String?
+    ) {
+        runOnUiThread {
+            val payload = hashMapOf<String, Any>(
+                "phase" to "exporting",
+                "completed" to completed,
+                "total" to total.coerceAtLeast(1),
+                "fraction" to fraction.coerceIn(0.0, 1.0)
+            )
+            if (!fileName.isNullOrBlank()) {
+                payload["fileName"] = fileName
+            }
+            eventSink?.success(payload)
+        }
+    }
+
     private fun startTransferForegroundService() {
         val intent = Intent(this, TransferForegroundService::class.java)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -99,6 +142,7 @@ class MainActivity : FlutterActivity() {
             result.error("busy", "Seçim zaten açık.", null)
             return
         }
+        exportCancelled = false
         mediaPickerResult = result
 
         val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
@@ -137,13 +181,48 @@ class MainActivity : FlutterActivity() {
                 return
             }
 
+            exportCancelled = false
+            activeExportResult = pending
             mediaExecutor.execute {
                 val paths = mutableListOf<String>()
-                for (uri in uris) {
-                    exportUriToCache(uri)?.let { paths.add(it) }
+                val total = uris.size
+                emitExportProgress(0, total, 0.0, null)
+
+                for ((index, uri) in uris.withIndex()) {
+                    if (exportCancelled) {
+                        runOnUiThread {
+                            activeExportResult?.error(
+                                "cancelled",
+                                "Medya hazırlığı iptal edildi.",
+                                null
+                            )
+                            activeExportResult = null
+                        }
+                        return@execute
+                    }
+
+                    val displayName = queryDisplayName(uri)
+                    exportUriToCache(uri, index, total, displayName)?.let { paths.add(it) }
+
+                    val overall = (index + 1).toDouble() / total.toDouble()
+                    emitExportProgress(index + 1, total, overall, displayName)
                 }
+
+                if (exportCancelled) {
+                    runOnUiThread {
+                        activeExportResult?.error(
+                            "cancelled",
+                            "Medya hazırlığı iptal edildi.",
+                            null
+                        )
+                        activeExportResult = null
+                    }
+                    return@execute
+                }
+
                 runOnUiThread {
-                    pending.success(if (paths.isEmpty()) null else paths)
+                    activeExportResult?.success(if (paths.isEmpty()) null else paths)
+                    activeExportResult = null
                 }
             }
             return
@@ -151,10 +230,15 @@ class MainActivity : FlutterActivity() {
         super.onActivityResult(requestCode, resultCode, data)
     }
 
-    private fun exportUriToCache(uri: Uri): String? {
+    private fun exportUriToCache(
+        uri: Uri,
+        index: Int,
+        total: Int,
+        displayName: String?
+    ): String? {
         return try {
             val resolver = applicationContext.contentResolver
-            var mime = resolver.getType(uri) ?: "application/octet-stream"
+            val mime = resolver.getType(uri) ?: "application/octet-stream"
             val extension = when {
                 mime.startsWith("video/") -> mime.substringAfter('/').ifBlank { "mp4" }
                 mime.contains("jpeg") || mime.contains("jpg") -> "jpg"
@@ -162,7 +246,7 @@ class MainActivity : FlutterActivity() {
                 mime.contains("heic") -> "heic"
                 mime.contains("webp") -> "webp"
                 else -> {
-                    val name = queryDisplayName(uri)
+                    val name = displayName
                     name?.substringAfterLast('.', "")?.ifBlank { null } ?: "bin"
                 }
             }
@@ -171,16 +255,51 @@ class MainActivity : FlutterActivity() {
             val dir = File(cacheDir, "DirectDrop/MediaPicker").apply { mkdirs() }
             val out = File(dir, name)
 
-            resolver.openInputStream(uri)?.use { input ->
+            val totalBytes = querySize(uri).coerceAtLeast(0L)
+            val input = resolver.openInputStream(uri) ?: return null
+            input.use { stream ->
                 FileOutputStream(out).use { output ->
-                    input.copyTo(output)
+                    val buffer = ByteArray(64 * 1024)
+                    var copied = 0L
+                    while (true) {
+                        if (exportCancelled) return null
+                        val read = stream.read(buffer)
+                        if (read <= 0) break
+                        output.write(buffer, 0, read)
+                        copied += read
+                        val itemFraction = if (totalBytes > 0) {
+                            copied.toDouble() / totalBytes.toDouble()
+                        } else {
+                            0.0
+                        }
+                        val overall = if (total > 0) {
+                            (index + itemFraction) / total.toDouble()
+                        } else {
+                            0.0
+                        }
+                        emitExportProgress(index, total, overall, displayName)
+                    }
                 }
-            } ?: return null
+            }
 
             out.absolutePath
         } catch (_: Exception) {
             null
         }
+    }
+
+    private fun querySize(uri: Uri): Long {
+        val resolver = applicationContext.contentResolver
+        resolver.query(uri, arrayOf(OpenableColumns.SIZE), null, null, null)
+            ?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    val index = cursor.getColumnIndex(OpenableColumns.SIZE)
+                    if (index >= 0 && !cursor.isNull(index)) {
+                        return cursor.getLong(index)
+                    }
+                }
+            }
+        return -1L
     }
 
     private fun queryDisplayName(uri: Uri): String? {
@@ -215,7 +334,6 @@ class MainActivity : FlutterActivity() {
     private fun isPublicDownloadsDirectory(dir: File): Boolean {
         val path = dir.absolutePath.replace('\\', '/')
         if (!path.contains("/Download")) return false
-        // Uygulama özel yolu (/Android/data/.../files/Download) halka açık İndirilenler değil.
         return !path.contains("/Android/data/")
     }
 

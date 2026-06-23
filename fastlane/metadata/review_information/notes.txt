@@ -1,1 +1,3 @@
 Demo hesabı gerekmez. Uygulama QR kod veya oda kodu ile cihazlar arasında dosya aktarımı sağlar.
+
+App Store açıklamasında yalnızca iPhone/iPad deneyimi anlatılmaktadır; iOS sürümünde diğer platformlara yönelik indirme veya tanıtım metni bulunmaz.

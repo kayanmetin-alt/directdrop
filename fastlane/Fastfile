@@ -5,6 +5,14 @@ def project_root
   File.expand_path("..", __dir__)
 end
 
+def pubspec_version_name
+  pubspec = File.read(File.join(project_root, "pubspec.yaml"))
+  if pubspec =~ /^version:\s*([^\+\s]+)/
+    return Regexp.last_match(1)
+  end
+  UI.user_error!("pubspec.yaml içinde version bulunamadı")
+end
+
 default_platform(:android)
 
 # App Store Connect sometimes returns "No data" while Fastlane tries to
@@ -142,7 +150,7 @@ platform :ios do
     upload_to_app_store(
       api_key: app_store_api_key_from_env,
       app_identifier: "com.directdrop.app",
-      app_version: "1.3.2",
+      app_version: pubspec_version_name,
       metadata_path: "./metadata",
       screenshots_path: "./screenshots",
       skip_binary_upload: true,
@@ -162,7 +170,7 @@ platform :ios do
     upload_to_app_store(
       api_key: app_store_api_key_from_env,
       app_identifier: "com.directdrop.app",
-      app_version: "1.3.2",
+      app_version: pubspec_version_name,
       metadata_path: "./metadata",
       skip_binary_upload: true,
       skip_metadata: false,

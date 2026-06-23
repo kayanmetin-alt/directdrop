@@ -5,9 +5,24 @@ import 'dart:typed_data';
 import 'package:crypto/crypto.dart';
 
 class FileHasher {
-  static Future<String> sha256File(String path) async {
+  static Future<String> sha256File(
+    String path, {
+    void Function(double fraction)? onProgress,
+  }) async {
     final file = File(path);
-    final digest = await sha256.bind(file.openRead()).first;
+    final total = await file.length();
+    if (total == 0) {
+      onProgress?.call(1.0);
+      return sha256.convert([]).toString();
+    }
+
+    var read = 0;
+    final stream = file.openRead().map((chunk) {
+      read += chunk.length;
+      onProgress?.call((read / total).clamp(0.0, 1.0));
+      return chunk;
+    });
+    final digest = await sha256.bind(stream).first;
     return digest.toString();
   }
 
