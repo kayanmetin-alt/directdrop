@@ -1,3 +1,10 @@
-Demo hesabı gerekmez. Uygulama QR kod veya oda kodu ile cihazlar arasında dosya aktarımı sağlar.
+DirectDrop için demo hesap veya giriş bilgisi gerekmez.
 
-App Store açıklamasında yalnızca iPhone/iPad deneyimi anlatılmaktadır; iOS sürümünde diğer platformlara yönelik indirme veya tanıtım metni bulunmaz.
+Test adımları:
+1. İki iPhone veya iPad cihazında uygulamayı açın.
+2. Bir cihazda ana ekrandaki QR kodu diğer cihazdan okutun veya 6 haneli oda kodunu girin.
+3. Gelen bağlantı isteğini onaylayın.
+4. Dosya Gönder ile bir veya daha fazla dosya seçip transferi başlatın.
+5. Alıcı tarafta gelen dosyayı onaylayın.
+
+İnternet bağlantısı ve bildirim izni gereklidir. Transfer edilen dosya içeriği sunucuya yüklenmez.

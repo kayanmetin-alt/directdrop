@@ -1,1 +1,1 @@
-Cihazlar arası hızlı aktarım
+QR ile dosya transferi

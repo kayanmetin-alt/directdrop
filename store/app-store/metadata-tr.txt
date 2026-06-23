@@ -2,23 +2,31 @@
 Dosya transferi, QR, WebRTC
 
 # App Store — alt başlık (30 karakter)
-Cihazlar arası hızlı aktarım
+QR ile dosya transferi
 
 # App Store — tanıtım metni (4000 karakter max)
-DirectDrop ile iPhone ve iPad'inizden internet üzerinden doğrudan dosya transferi yapın.
+DirectDrop, iPhone ve iPad'inizden fotoğraf, video ve dosya aktarmayı kolaylaştıran hızlı bir paylaşım uygulamasıdır.
 
-• QR kod veya eşleşmiş cihaz listesi ile hızlı bağlantı
-• Dosyalar sunucuya yüklenmez — WebRTC ile cihazdan cihaza gider
-• Bağlantı isteği bildirimi (uygulama kapalıyken bile)
-• Çoklu dosya gönderimi ve indirme geçmişi
-• Fotoğraf ve video gönderiminde hazırlık ilerlemesi
+QR kod veya 6 haneli oda kodu ile eşleşin, bağlantı isteğini onaylayın ve dosyalarınızı doğrudan karşı tarafa gönderin.
 
-DirectDrop yalnızca cihaz eşleştirmesi için Firebase kullanır; transfer edilen dosya içeriği sunucuya iletilmez.
+Öne çıkanlar:
+
+• QR kod veya oda kodu ile hızlı eşleştirme
+• WebRTC ile doğrudan transfer
+• Dosya içeriği sunucuya yüklenmeden aktarım
+• Çoklu dosya gönderimi ve toplu onay
+• Transfer ilerlemesini canlı takip
+• Fotoğraf ve video hazırlığında ilerleme göstergesi
+• Gönderilen ve alınan dosyalar için transfer geçmişi
+• Kayıtlı cihazlara yeniden bağlanma
+• Uygulama kapalıyken bağlantı isteği bildirimi
+
+DirectDrop, eşleştirme ve bağlantı kurulumu için Firebase tabanlı sinyalleme kullanır. Transfer edilen dosya içeriği sunucuya iletilmez.
 
 Gizlilik politikası: https://kayanmetin-alt.github.io/directdrop/privacy-policy.html
 
 # Anahtar kelimeler (100 karakter, virgülle)
-dosya transferi,webrtc,qr,p2p,airdrop,iphone,ipad,directdrop,transfer,share
+dosya transferi,webrtc,qr,p2p,iphone,ipad,directdrop,transfer,share,photos
 
 # Kategori
 Productivity
@@ -31,3 +39,15 @@ https://kayanmetin-alt.github.io/directdrop/support.html
 
 # Gizlilik politikası URL
 https://kayanmetin-alt.github.io/directdrop/privacy-policy.html
+
+# App Review — Notes (App Store Connect)
+DirectDrop için demo hesap veya giriş bilgisi gerekmez.
+
+Test adımları:
+1. İki iPhone veya iPad cihazında uygulamayı açın.
+2. Bir cihazda ana ekrandaki QR kodu diğer cihazdan okutun veya 6 haneli oda kodunu girin.
+3. Gelen bağlantı isteğini onaylayın.
+4. Dosya Gönder ile bir veya daha fazla dosya seçip transferi başlatın.
+5. Alıcı tarafta gelen dosyayı onaylayın.
+
+İnternet bağlantısı ve bildirim izni gereklidir. Transfer edilen dosya içeriği sunucuya yüklenmez.

@@ -1,1 +1,1 @@
-dosya transferi,webrtc,qr,p2p,airdrop,iphone,ipad,directdrop,transfer,share
+dosya transferi,webrtc,qr,p2p,iphone,ipad,directdrop,transfer,share,photos
