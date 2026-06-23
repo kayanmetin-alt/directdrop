@@ -90,7 +90,6 @@ final class PhotosPickerHandler: NSObject, PHPickerViewControllerDelegate {
   private var preferJpegExport = false
   private var exportCancelled = false
   private var activeExportResult: FlutterResult?
-  private var progressObservations: [NSKeyValueObservation] = []
 
   private override init() {
     super.init()
@@ -98,7 +97,6 @@ final class PhotosPickerHandler: NSObject, PHPickerViewControllerDelegate {
 
   func cancelExport() {
     exportCancelled = true
-    progressObservations.removeAll()
     if let result = activeExportResult {
       activeExportResult = nil
       result(FlutterError(code: "cancelled", message: "Medya hazırlığı iptal edildi.", details: nil))
@@ -156,7 +154,6 @@ final class PhotosPickerHandler: NSObject, PHPickerViewControllerDelegate {
   private func exportResults(_ results: [PHPickerResult], result: @escaping FlutterResult) {
     exportCancelled = false
     activeExportResult = result
-    progressObservations.removeAll()
 
     let destination = uniqueExportDestination()
     var paths: [String] = []
@@ -200,18 +197,9 @@ final class PhotosPickerHandler: NSObject, PHPickerViewControllerDelegate {
 
       let fileName = provider.suggestedName
       group.enter()
-
-      let progressObs = provider.observe(\.progress, options: [.new, .initial]) { prov, _ in
-        guard let progress = prov.progress else { return }
-        let fraction = progress.totalUnitCount > 0
-          ? Double(progress.completedUnitCount) / Double(progress.totalUnitCount)
-          : 0
-        emitOverall(currentIndex: index, itemFraction: fraction, fileName: fileName)
-      }
-      progressObservations.append(progressObs)
+      emitOverall(currentIndex: index, itemFraction: 0, fileName: fileName)
 
       provider.loadFileRepresentation(forTypeIdentifier: typeId) { [weak self] url, error in
-        progressObs.invalidate()
         defer { group.leave() }
 
         guard let self else { return }
@@ -247,7 +235,6 @@ final class PhotosPickerHandler: NSObject, PHPickerViewControllerDelegate {
 
     group.notify(queue: .main) { [weak self] in
       guard let self else { return }
-      self.progressObservations.removeAll()
       self.activeExportResult = nil
       self.preferJpegExport = false
 
