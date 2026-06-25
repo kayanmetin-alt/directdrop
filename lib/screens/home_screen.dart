@@ -4,7 +4,6 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 
-import '../models/reconnect_request.dart';
 import '../services/device_identity_service.dart';
 import '../services/paired_devices_service.dart';
 import '../services/recent_connection_service.dart';
@@ -17,7 +16,7 @@ import '../widgets/my_device_qr_card.dart';
 import '../widgets/recent_paired_devices_card.dart';
 import '../widgets/app_version_label.dart';
 import '../widgets/desktop_centered_layout.dart';
-import 'incoming_reconnect_screen.dart';
+import '../widgets/incoming_reconnect_prompt.dart';
 import 'settings_screen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -66,72 +65,23 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _onChanged() {
-    if (mounted) setState(() {});
-  }
-
-  void _rejectReconnect(ReconnectRequest request) {
-    unawaited(_recentConnect.rejectReconnectRequest(request));
-  }
-
-  Widget _buildReconnectTopRow(
-    ThemeData theme,
-    ReconnectRequest reconnect,
-  ) {
-    return Material(
-      color: theme.colorScheme.secondaryContainer,
-      borderRadius: BorderRadius.circular(12),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(12, 10, 4, 10),
-        child: Row(
-          children: [
-            Icon(
-              Icons.link,
-              color: theme.colorScheme.primary,
-              size: 22,
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                '${reconnect.fromDeviceName} bağlantı kurmak istiyor',
-                style: theme.textTheme.titleSmall,
-              ),
-            ),
-            IconButton(
-              icon: const Icon(Icons.check_circle_outline),
-              color: theme.colorScheme.primary,
-              tooltip: 'Onayla',
-              onPressed: () => _approveReconnect(reconnect),
-            ),
-            IconButton(
-              icon: const Icon(Icons.cancel_outlined),
-              color: theme.colorScheme.error,
-              tooltip: 'Reddet',
-              onPressed: () => _rejectReconnect(reconnect),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Future<void> _approveReconnect(ReconnectRequest request) async {
-    _recentConnect.dismissIncomingReconnectUi(request);
     if (!mounted) return;
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => IncomingReconnectScreen(
-          request: request,
-          autoApprove: true,
-        ),
-      ),
-    );
+    setState(() {});
+    // Mobilde gelen bağlantı isteği yalnızca tam ekran "gelen arama" ekranıyla
+    // yanıtlanır (ana ekranda banner onayı yok). Banner durumu her değiştiğinde
+    // tam ekranı tetikle; böylece istek geldiği an açılır, 20-30 sn gecikme olmaz.
+    if (Platform.isIOS || Platform.isAndroid) {
+      final pending = _recentConnect.incomingReconnectRequest;
+      if (pending != null) {
+        IncomingReconnectPrompt.scheduleShow(pending);
+      }
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final incoming = _recentConnect.incomingInvitePeer;
-    final reconnect = _recentConnect.incomingReconnectRequest;
 
     final isMobile = Platform.isIOS || Platform.isAndroid;
     final horizontalPadding = isMobile ? 16.0 : 24.0;
@@ -164,10 +114,6 @@ class _HomeScreenState extends State<HomeScreen> {
             child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              if (reconnect != null && !Platform.isMacOS) ...[
-                _buildReconnectTopRow(theme, reconnect),
-                const SizedBox(height: 16),
-              ],
               if (incoming != null) ...[
                 Material(
                   color: theme.colorScheme.primaryContainer,

@@ -30,6 +30,8 @@ class TransferProgressTile extends StatelessWidget {
         return 'Bekliyor';
       case TransferStatus.awaitingApproval:
         return 'Onay bekliyor';
+      case TransferStatus.queued:
+        return 'Sıraya alındı';
       case TransferStatus.inProgress:
         return item.direction == TransferDirection.sending
             ? 'Gönderiliyor'
@@ -56,6 +58,8 @@ class TransferProgressTile extends StatelessWidget {
       case TransferStatus.inProgress:
       case TransferStatus.verifying:
         return Icons.sync;
+      case TransferStatus.queued:
+        return Icons.schedule;
       case TransferStatus.paused:
         return Icons.pause_circle_outline;
       default:

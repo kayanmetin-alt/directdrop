@@ -756,6 +756,13 @@ class TransferSessionController extends ChangeNotifier {
     if (!await DesktopBackgroundService.instance.isMainWindowHidden()) return;
 
     final overlay = DesktopOverlayService.instance;
+    final hasAwaiting = items.any(
+      (i) =>
+          i.direction == TransferDirection.receiving &&
+          i.status == TransferStatus.awaitingApproval,
+    );
+    if (!hasAwaiting && !overlay.isOverlayActive) return;
+
     await overlay.onTransferItemsChanged(items);
   }
 
@@ -881,6 +888,12 @@ class TransferSessionController extends ChangeNotifier {
 
   void _onConnectionStateChanged(WebRtcConnectionState state) {
     _connectionState = state;
+
+    // Masaüstü menü çubuğu ikonu: bağlıyken renkli, değilken monokrom.
+    unawaited(
+      DesktopBackgroundService.instance
+          .setConnectionActive(state == WebRtcConnectionState.connected),
+    );
 
     if (state == WebRtcConnectionState.connected) {
       _hadSuccessfulConnection = true;
@@ -1184,6 +1197,9 @@ class TransferSessionController extends ChangeNotifier {
     _disconnecting = true;
     _reconnecting = false;
     _guestWaitGeneration++;
+
+    // Menü çubuğu ikonu monokroma dönsün.
+    unawaited(DesktopBackgroundService.instance.setConnectionActive(false));
 
     _checkpointDebounce?.cancel();
     _checkpointDebounce = null;

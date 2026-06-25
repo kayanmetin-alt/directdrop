@@ -34,6 +34,7 @@ class DesktopBackgroundService extends ChangeNotifier
   void Function(PairedDevice peer)? onConnectToPeer;
   void Function(ReconnectRequest request)? onApproveReconnect;
   Future<void> Function()? onShowMainApp;
+  Future<void> Function()? onOpenSettings;
   void Function()? onMainWindowShown;
   Future<void> Function()? onMainWindowHidden;
 
@@ -65,21 +66,59 @@ class DesktopBackgroundService extends ChangeNotifier
     if (!_initialized) {
       trayManager.removeListener(this);
       trayManager.addListener(this);
-      // tray_manager macOS'ta ikonu rootBundle.load(iconPath) ile yükler ve
-      // Windows'ta data/flutter_assets/<iconPath> yolundan okur; her iki durumda
-      // da doğrudan ASSET yolu verilmelidir (mutlak dosya yolu değil).
-      // macOS menü çubuğu monokrom template ikon ister (açık/koyu temaya uyum).
-      final iconAsset = Platform.isMacOS
-          ? 'assets/tray_icon_template.png'
-          : 'assets/tray_icon.png';
-      await trayManager.setIcon(iconAsset, isTemplate: Platform.isMacOS);
       await trayManager.setToolTip('DirectDrop');
       _initialized = true;
     }
 
+    // İkonu mevcut bağlantı durumuna göre uygula (yeniden kurulumda da doğru kalır).
+    await _applyTrayIcon();
+
     _attachMenuListeners();
     await _refreshTrayMenu();
     _trayActive = true;
+  }
+
+  /// Aktif bir bağlantı var mı? Menü çubuğu ikonu buna göre değişir:
+  /// bağlıyken renkli (yeşil/kırmızı oklar), bağlı değilken monokrom template.
+  bool _connectionActive = false;
+
+  Future<void> setConnectionActive(bool active) async {
+    if (!isSupported) return;
+    if (_connectionActive == active) return;
+    _connectionActive = active;
+    await _applyTrayIcon();
+  }
+
+  Future<void> _applyTrayIcon() async {
+    if (!_initialized) return;
+    // tray_manager macOS'ta ikonu rootBundle.load(iconPath) ile yükler ve
+    // Windows'ta data/flutter_assets/<iconPath> yolundan okur; her iki durumda
+    // da doğrudan ASSET yolu verilmelidir (mutlak dosya yolu değil).
+    String iconAsset;
+    bool isTemplate;
+    if (Platform.isMacOS) {
+      // Her iki durum da template (monokrom): sistem açık/koyu menü çubuğuna
+      // göre otomatik renklendirir, böylece açık arka planda da net görünür.
+      // Bağlıyken kalın/dolu zincir, bağlı değilken ince zincir.
+      iconAsset = _connectionActive
+          ? 'assets/tray_icon_active.png'
+          : 'assets/tray_icon_template.png';
+      isTemplate = true;
+    } else {
+      iconAsset = 'assets/tray_icon.png';
+      isTemplate = false;
+    }
+    try {
+      // tray_manager simgeyi iconSize x iconSize punto kareye zorlar (varsayılan
+      // 18). Komşu sistem simgeleriyle aynı boyda görünmesi için 20pt veriyoruz.
+      await trayManager.setIcon(
+        iconAsset,
+        isTemplate: isTemplate,
+        iconSize: 20,
+      );
+    } catch (e, stack) {
+      debugPrint('Tray ikon güncellenemedi: $e\n$stack');
+    }
   }
 
   /// Eşleşme/istek/cihaz listesi değiştikçe menüyü güncel tut.
@@ -217,6 +256,7 @@ class DesktopBackgroundService extends ChangeNotifier
     }
 
     items.add(MenuItem(key: 'show', label: 'DirectDrop\'u aç'));
+    items.add(MenuItem(key: 'settings', label: 'Ayarlar'));
     items.add(MenuItem(key: 'quit', label: 'Çıkış'));
     return items;
   }
@@ -273,6 +313,14 @@ class DesktopBackgroundService extends ChangeNotifier
       }
       return;
     }
+    if (key == 'settings') {
+      if (onOpenSettings != null) {
+        unawaited(onOpenSettings!());
+      } else {
+        unawaited(showMainWindow(force: true));
+      }
+      return;
+    }
     if (key == 'quit') {
       unawaited(quitApp());
       return;
@@ -293,10 +341,11 @@ class DesktopBackgroundService extends ChangeNotifier
       return;
     }
     if (key == 'files_accept_all') {
+      final overlay = DesktopOverlayService.instance;
+      unawaited(overlay.markAllFilesApproved());
       unawaited(
         ActiveSessionRegistry.instance.activeController?.acceptAllIncomingFiles(),
       );
-      unawaited(DesktopOverlayService.instance.showTransferHud());
       return;
     }
     if (key == 'files_reject_all') {
@@ -307,10 +356,11 @@ class DesktopBackgroundService extends ChangeNotifier
     }
     if (key.startsWith('file_accept:')) {
       final id = key.substring('file_accept:'.length);
+      final overlay = DesktopOverlayService.instance;
+      unawaited(overlay.markFileResolved(id, approved: true));
       unawaited(
         ActiveSessionRegistry.instance.activeController?.acceptIncomingFile(id),
       );
-      unawaited(DesktopOverlayService.instance.showTransferHud());
       return;
     }
     if (key.startsWith('file_reject:')) {

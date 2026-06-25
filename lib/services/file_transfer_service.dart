@@ -272,6 +272,12 @@ class FileTransferService {
       return;
     }
 
+    // Onaylandı ama sırası gelene kadar kuyrukta bekleyecek → "Sıraya alındı".
+    // Akış başlayınca _streamOutbound bunu inProgress'e çevirir.
+    if (job.item.status == TransferStatus.awaitingApproval) {
+      job.item.status = TransferStatus.queued;
+      _emit();
+    }
     _enqueueOutboundJob(job);
   }
 
@@ -317,11 +323,17 @@ class FileTransferService {
     if (pending == null) return;
 
     final item = pending.item;
-    item.status = TransferStatus.inProgress;
+    // Onaylandı ama veri henüz akmıyor → "Sıraya alındı". İlk parça gelince
+    // (_handleBinaryChunk) "Alınıyor"a (inProgress) geçer.
+    item.status = TransferStatus.queued;
     _emit();
 
-    await _sendControl({'type': 'file_start_ack', 'fileId': fileId});
+    // Önce alma bağlamını (diske yazma) hazırla, SONRA onayı gönder. Aksi halde
+    // gönderen onayı alıp ilk parçayı, biz bağlamı kurmadan yollayabilir; o parça
+    // sessizce düşer, chunk_ack gelmez ve gönderen 30 sn sonra timeout'a düşerek
+    // dosyayı "başarısız" yapar (ve kuyruktaki sonraki dosyaları da bekletir).
     await _beginReceiveFile(pending);
+    await _sendControl({'type': 'file_start_ack', 'fileId': fileId});
   }
 
   Future<void> rejectIncoming(String fileId) async {
@@ -420,7 +432,8 @@ class FileTransferService {
 
   bool _isActiveTransfer(TransferFileItem item) {
     return item.status == TransferStatus.inProgress ||
-        item.status == TransferStatus.paused;
+        item.status == TransferStatus.paused ||
+        item.status == TransferStatus.queued;
   }
 
   bool _canResumeTransfer(TransferFileItem item) {
@@ -1102,6 +1115,11 @@ class FileTransferService {
 
     final context = _receiveContexts[fileId];
     if (context == null) return;
+
+    // İlk parça geldi → "Sıraya alındı"dan "Alınıyor"a geç.
+    if (context.item.status != TransferStatus.inProgress) {
+      context.item.status = TransferStatus.inProgress;
+    }
 
     final offset = chunkIndex * context.chunkSize;
     await context.raf.setPosition(offset);

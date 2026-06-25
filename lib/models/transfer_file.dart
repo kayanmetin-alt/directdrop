@@ -3,6 +3,10 @@ enum TransferDirection { sending, receiving }
 enum TransferStatus {
   pending,
   awaitingApproval,
+
+  /// Onaylandı ama sırası gelmedi (gönderen kuyrukta bekletiyor / alıcı ilk
+  /// parçayı henüz almadı). Kullanıcıya "Sıraya alındı" olarak gösterilir.
+  queued,
   inProgress,
   paused,
   verifying,

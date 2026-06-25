@@ -1,10 +1,7 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 
 import '../models/paired_device.dart';
 import '../models/reconnect_request.dart';
-import '../screens/incoming_reconnect_screen.dart';
 import '../screens/recent_connect_screen.dart';
 import '../services/paired_devices_service.dart';
 import '../services/recent_connection_service.dart';
@@ -50,55 +47,13 @@ class _RecentPairedDevicesCardState extends State<RecentPairedDevicesCard> {
     );
   }
 
-  Future<void> _approveReconnect(ReconnectRequest request) async {
-    _recentConnect.dismissIncomingReconnectUi(request);
-    if (!mounted) return;
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => IncomingReconnectScreen(
-          request: request,
-          autoApprove: true,
-        ),
-      ),
-    );
-  }
-
-  void _rejectReconnect(ReconnectRequest request) {
-    unawaited(_recentConnect.rejectReconnectRequest(request));
-  }
-
-  Widget? _reconnectRowActions(
-    ThemeData theme,
-    ReconnectRequest? pendingReconnect,
-  ) {
-    if (pendingReconnect == null) return null;
-
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        IconButton(
-          icon: const Icon(Icons.check_circle_outline),
-          color: theme.colorScheme.primary,
-          tooltip: 'Onayla',
-          onPressed: () => _approveReconnect(pendingReconnect),
-        ),
-        IconButton(
-          icon: const Icon(Icons.cancel_outlined),
-          color: theme.colorScheme.error,
-          tooltip: 'Reddet',
-          onPressed: () => _rejectReconnect(pendingReconnect),
-        ),
-      ],
-    );
-  }
-
   Widget _deviceRowCard({
     required ThemeData theme,
     required PairedDevice device,
     required ReconnectRequest? pendingReconnect,
   }) {
-    final rowActions = _reconnectRowActions(theme, pendingReconnect);
-
+    // Gelen bağlantı isteğinin onayı yalnızca tam ekran "gelen arama" ekranından
+    // yapılır; bu satırda artık onay/ret butonu yok, sadece bilgi gösterilir.
     return Card(
       margin: EdgeInsets.zero,
       color: pendingReconnect != null
@@ -115,20 +70,19 @@ class _RecentPairedDevicesCardState extends State<RecentPairedDevicesCard> {
               ? 'Bağlantı isteği bekliyor'
               : 'Son: ${_formatLastSeen(device.lastConnectedAt)}',
         ),
-        trailing: rowActions ??
-            PopupMenuButton<String>(
-              onSelected: (value) {
-                if (value == 'remove') {
-                  _pairedService.remove(device.deviceId);
-                }
-              },
-              itemBuilder: (context) => const [
-                PopupMenuItem(
-                  value: 'remove',
-                  child: Text('Listeden kaldır'),
-                ),
-              ],
+        trailing: PopupMenuButton<String>(
+          onSelected: (value) {
+            if (value == 'remove') {
+              _pairedService.remove(device.deviceId);
+            }
+          },
+          itemBuilder: (context) => const [
+            PopupMenuItem(
+              value: 'remove',
+              child: Text('Listeden kaldır'),
             ),
+          ],
+        ),
         onTap: pendingReconnect != null
             ? null
             : () => _openRecentConnect(device),

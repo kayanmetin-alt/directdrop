@@ -11,6 +11,7 @@ import '../providers/transfer_session_controller.dart';
 import 'active_session_registry.dart';
 import 'desktop_background_service.dart';
 import 'desktop_window_service.dart';
+import 'webrtc_service.dart';
 
 /// Dosya panelindeki satır durumu.
 enum _PanelFilePhase { pending, transferring, completed }
@@ -32,7 +33,7 @@ class _PanelFileRow {
 }
 
 /// Reconnect panelinin gösterdiği aşama.
-enum ReconnectPanelPhase { prompt, connecting, connected }
+enum ReconnectPanelPhase { prompt, connecting, connected, disconnected }
 
 class DesktopOverlayService extends ChangeNotifier {
   DesktopOverlayService._();
@@ -50,6 +51,13 @@ class DesktopOverlayService extends ChangeNotifier {
   ReconnectPanelPhase _reconnectPhase = ReconnectPanelPhase.prompt;
   TransferSessionController? _reconnectController;
   String _reconnectPeerName = 'Cihaz';
+
+  /// Giden bağlantı akışında alt başlıkta gösterilecek durum metni
+  /// (ör. "İstek gönderildi", "Onay bekleniyor", "Bağlanılıyor…").
+  String? _reconnectStatusOverride;
+
+  /// "Bağlantı koptu" bildiriminin alt başlığı (kopma nedeni).
+  String _disconnectReason = '';
 
   String? _filesPanelPeerName;
   final Map<String, _PanelFileRow> _panelFiles = {};
@@ -125,10 +133,45 @@ class DesktopOverlayService extends ChangeNotifier {
     }
 
     final items = controller.fileTransfer?.items ?? const <TransferFileItem>[];
-    unawaited(onTransferItemsChanged(items));
+    final awaiting = items
+        .where(
+          (i) =>
+              i.direction == TransferDirection.receiving &&
+              i.status == TransferStatus.awaitingApproval,
+        )
+        .toList();
 
-    if (controller.isDisposed ||
-        (_overlaySessionWasConnected && !controller.isConnected)) {
+    if (awaiting.isNotEmpty) {
+      unawaited(
+        showIncomingFilesBanner(
+          peerName: controller.peerDisplayName ?? 'Cihaz',
+          files: awaiting,
+        ),
+      );
+    } else if (_panelFiles.isNotEmpty ||
+        _approvedPendingIds.isNotEmpty ||
+        banners.isNotEmpty) {
+      unawaited(onTransferItemsChanged(items));
+    }
+
+    // Terminal kopma: karşı taraf ayrıldı ya da başarılı bağlantı sonrası
+    // bağlantı kalıcı olarak başarısız (geçici reconnect denemesi değil).
+    final terminated = controller.isDisposed ||
+        controller.peerHasLeft ||
+        (_overlaySessionWasConnected &&
+            !controller.isBackgrounded &&
+            !controller.isConnected &&
+            !controller.isReconnecting &&
+            controller.connectionState == WebRtcConnectionState.failed);
+
+    if (terminated) {
+      if (_overlaySessionWasConnected) {
+        final peerName = controller.peerDisplayName ?? _reconnectPeerName;
+        final reason = controller.peerHasLeft
+            ? '$peerName bağlantıyı kapattı'
+            : (controller.errorMessage ?? 'Bağlantı koptu');
+        unawaited(showDisconnectedNotice(peerName, reason));
+      }
       disableOverlayOnlySession();
     }
   }
@@ -149,6 +192,8 @@ class DesktopOverlayService extends ChangeNotifier {
           b.kind == DesktopBannerKind.incomingFiles,
     );
     _reconnectPhase = ReconnectPanelPhase.prompt;
+    _reconnectStatusOverride = null;
+    _disconnectReason = '';
     _panelFiles.clear();
     _filesPanelAutoHideTimer?.cancel();
     _recentlyActiveIds.clear();
@@ -187,6 +232,78 @@ class DesktopOverlayService extends ChangeNotifier {
 
     await _syncPanels();
     notifyListeners();
+  }
+
+  /// Tray menüsünden başlatılan GİDEN bağlantı: panel "bağlanılıyor" aşamasında
+  /// açılır (onay/ret butonu yok). Durum metni [updateOutgoingStatus] ile güncellenir.
+  Future<void> beginOutgoingConnect(String peerName) async {
+    if (!isSupported) return;
+    if (!await shouldUseNativePanels()) return;
+
+    _reconnectCloseTimer?.cancel();
+    _detachReconnectController();
+    _reconnectPeerName = peerName;
+    _reconnectPhase = ReconnectPanelPhase.connecting;
+    _reconnectStatusOverride = 'İstek gönderiliyor…';
+
+    final id = 'outgoing_${peerName}_${DateTime.now().millisecondsSinceEpoch}';
+    banners.removeWhere((b) => b.kind == DesktopBannerKind.reconnect);
+    banners.insert(
+      0,
+      DesktopBannerEntry(
+        id: id,
+        kind: DesktopBannerKind.reconnect,
+        title: '$peerName ile bağlanılıyor',
+        subtitle: '',
+        peerName: peerName,
+      ),
+    );
+
+    notifyListeners();
+    await _syncPanels();
+  }
+
+  /// Giden bağlantı durum metnini güncelle (connectToPeer onProgress'ten).
+  Future<void> updateOutgoingStatus(String message) async {
+    if (!isSupported) return;
+    if (_reconnectPhase != ReconnectPanelPhase.connecting) return;
+    _reconnectStatusOverride = message;
+    notifyListeners();
+    await _syncPanels();
+  }
+
+  /// Arka planda bağlantı koptuğunda sağ panelde kısa bir bilgilendirme göster.
+  Future<void> showDisconnectedNotice(String peerName, String reason) async {
+    if (!isSupported) return;
+    if (!await shouldUseNativePanels()) return;
+
+    _reconnectCloseTimer?.cancel();
+    _detachReconnectController();
+    _reconnectPeerName = peerName;
+    _reconnectPhase = ReconnectPanelPhase.disconnected;
+    _reconnectStatusOverride = null;
+    _disconnectReason = reason;
+
+    final id = 'disconnected_${peerName}_${DateTime.now().millisecondsSinceEpoch}';
+    banners.removeWhere((b) => b.kind == DesktopBannerKind.reconnect);
+    banners.insert(
+      0,
+      DesktopBannerEntry(
+        id: id,
+        kind: DesktopBannerKind.reconnect,
+        title: '$peerName bağlantısı koptu',
+        subtitle: reason,
+        peerName: peerName,
+      ),
+    );
+
+    notifyListeners();
+    await _syncPanels();
+
+    _reconnectCloseTimer?.cancel();
+    _reconnectCloseTimer = Timer(const Duration(seconds: 4), () {
+      unawaited(_dismissReconnectBanner());
+    });
   }
 
   /// Onaylandı; bağlantı kuruluyor durumuna geç.
@@ -233,6 +350,8 @@ class DesktopOverlayService extends ChangeNotifier {
   Future<void> _dismissReconnectBanner() async {
     banners.removeWhere((b) => b.kind == DesktopBannerKind.reconnect);
     _reconnectPhase = ReconnectPanelPhase.prompt;
+    _reconnectStatusOverride = null;
+    _disconnectReason = '';
     notifyListeners();
     await _syncPanels();
   }
@@ -342,9 +461,17 @@ class DesktopOverlayService extends ChangeNotifier {
         continue;
       }
 
-      if (item.status == TransferStatus.inProgress ||
+      if (item.status == TransferStatus.queued ||
+          item.status == TransferStatus.inProgress ||
           item.status == TransferStatus.verifying ||
           item.status == TransferStatus.paused) {
+        // Yalnızca panel/tray üzerinden onaylanmış dosyaları izle; ana pencerede
+        // başlayan aktif transferler arka plana alınınca panele taşınmaz.
+        final trackedOnPanel = _panelFiles.containsKey(item.id) ||
+            _approvedPendingIds.contains(item.id) ||
+            _recentlyActiveIds.contains(item.id);
+        if (!trackedOnPanel) continue;
+
         _approvedPendingIds.remove(item.id);
         _recentlyActiveIds.add(item.id);
         _panelFiles[item.id] = _PanelFileRow(
@@ -400,16 +527,47 @@ class DesktopOverlayService extends ChangeNotifier {
 
   Future<void> showTransferHud() async {
     if (!isSupported) return;
-    final items = _controller?.fileTransfer?.items ?? const <TransferFileItem>[];
-    _syncPanelFilesFromTransferItems(items);
-    _filesPanelAutoHideTimer?.cancel();
+    if (!await shouldUseNativePanels()) return;
+    if (_panelFiles.isEmpty && banners.isEmpty) return;
     await _syncPanels();
     notifyListeners();
+  }
+
+  /// Panel arayüzünü kapatır; arka plandaki transfer/oturum devam eder.
+  Future<void> dismissPanelsUiOnly() async {
+    if (!isSupported) return;
+    _filesPanelAutoHideTimer?.cancel();
+    _reconnectCloseTimer?.cancel();
+    _detachReconnectController();
+    banners.clear();
+    _panelFiles.clear();
+    _recentlyActiveIds.clear();
+    _approvedPendingIds.clear();
+    _filesPanelPeerName = null;
+    _reconnectPhase = ReconnectPanelPhase.prompt;
+    _reconnectStatusOverride = null;
+    _disconnectReason = '';
+    _progressSyncDebounce?.cancel();
+    notifyListeners();
+    await _hideAllPanels();
   }
 
   Future<void> onTransferItemsChanged(List<TransferFileItem> items) async {
     if (!isSupported) return;
     if (!await shouldUseNativePanels()) return;
+
+    final hasAwaiting = items.any(
+      (i) =>
+          i.direction == TransferDirection.receiving &&
+          i.status == TransferStatus.awaitingApproval &&
+          !_rejectedFileIds.contains(i.id),
+    );
+    final hasPanelWork =
+        _panelFiles.isNotEmpty ||
+        _approvedPendingIds.isNotEmpty ||
+        banners.isNotEmpty;
+
+    if (!hasAwaiting && !hasPanelWork) return;
 
     _syncPanelFilesFromTransferItems(items);
     _maybeAutoHideFilesPanel();
@@ -417,6 +575,8 @@ class DesktopOverlayService extends ChangeNotifier {
     notifyListeners();
     if (_panelFiles.isNotEmpty || banners.isNotEmpty) {
       _scheduleProgressSync();
+    } else {
+      await _syncPanels();
     }
   }
 
@@ -546,6 +706,8 @@ class DesktopOverlayService extends ChangeNotifier {
         return '$_reconnectPeerName ile bağlanılıyor';
       case ReconnectPanelPhase.connected:
         return '$_reconnectPeerName bağlandı';
+      case ReconnectPanelPhase.disconnected:
+        return '$_reconnectPeerName bağlantısı koptu';
       case ReconnectPanelPhase.prompt:
         return banner.title;
     }
@@ -554,9 +716,12 @@ class DesktopOverlayService extends ChangeNotifier {
   String _reconnectSubtitle() {
     switch (_reconnectPhase) {
       case ReconnectPanelPhase.connecting:
-        return 'Oda açılıyor, lütfen bekleyin…';
+        // Giden bağlantıda onProgress metni; aksi halde genel ileti.
+        return _reconnectStatusOverride ?? 'Oda açılıyor, lütfen bekleyin…';
       case ReconnectPanelPhase.connected:
         return 'Bağlantı kuruldu. Dosya transferine hazır.';
+      case ReconnectPanelPhase.disconnected:
+        return _disconnectReason.isEmpty ? 'Bağlantı koptu.' : _disconnectReason;
       case ReconnectPanelPhase.prompt:
         return 'Onaylayın veya reddedin.';
     }
@@ -583,6 +748,8 @@ class DesktopOverlayService extends ChangeNotifier {
     switch (status) {
       case TransferStatus.completed:
         return 'Tamamlandı';
+      case TransferStatus.queued:
+        return 'Sıraya alındı';
       case TransferStatus.verifying:
         return 'Doğrulanıyor';
       case TransferStatus.paused:
@@ -629,6 +796,8 @@ class DesktopOverlayService extends ChangeNotifier {
         onRejectAllFiles?.call();
       case 'open_main':
         onOpenMainApp?.call();
+      case 'panel_dismiss':
+        await dismissPanelsUiOnly();
     }
   }
 }

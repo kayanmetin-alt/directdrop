@@ -71,6 +71,7 @@ class ScreenWakeService extends ChangeNotifier {
       switch (item.status) {
         case TransferStatus.pending:
         case TransferStatus.awaitingApproval:
+        case TransferStatus.queued:
         case TransferStatus.inProgress:
         case TransferStatus.paused:
         case TransferStatus.verifying:

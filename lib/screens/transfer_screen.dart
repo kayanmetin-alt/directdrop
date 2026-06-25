@@ -317,6 +317,7 @@ class _TransferScreenState extends State<TransferScreen>
         .where(
           (item) =>
               item.status == TransferStatus.awaitingApproval ||
+              item.status == TransferStatus.queued ||
               item.status == TransferStatus.inProgress ||
               item.status == TransferStatus.paused ||
               item.status == TransferStatus.verifying ||

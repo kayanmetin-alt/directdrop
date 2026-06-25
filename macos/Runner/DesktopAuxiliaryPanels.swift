@@ -63,10 +63,15 @@ final class DesktopAuxiliaryPanels {
     if let files = args["files"] as? [String: Any] {
       let panel = filesPanel ?? AuxiliaryPanel(kind: .files)
       filesPanel = panel
-      panel.updateFiles(files) { [weak self] action, payload in
+      let structureChanged = panel.updateFiles(files) { [weak self] action, payload in
         self?.sendAction(action, payload: payload)
       }
-      panel.show(atStackOffset: yOffset)
+      // Yalnızca satır yapısı değiştiğinde (ya da panel henüz görünür değilken)
+      // yeniden konumlandır; salt ilerleme güncellemelerinde paneli oynatma —
+      // aksi halde bekleyen satırdaki butonlara basmak zorlaşır.
+      if structureChanged || !panel.isVisible {
+        panel.show(atStackOffset: yOffset)
+      }
       yOffset += panel.frame.height + 10
     } else {
       filesPanel?.closePanel()
@@ -102,20 +107,29 @@ private final class AuxiliaryPanel: NSPanel {
   private var actionHandler: ((String, [String: Any]) -> Void)?
 
   private let effectView = NSVisualEffectView()
+  private let headerRow = NSStackView()
+  private let innerHeader = NSStackView()
+  private let titleBlock = NSStackView()
+  private let avatarBadge = AvatarBadge()
   private let titleLabel = NSTextField(labelWithString: "")
+  private let closeButton = NSButton()
   private let subtitleLabel = NSTextField(labelWithString: "")
   private let stackView = NSStackView()
   private let buttonBar = NSStackView()
   private let listStack = NSStackView()
   private let spinner = NSProgressIndicator()
 
-  private static let kPanelWidth: CGFloat = 420
-  private static let kFileRowHeight: CGFloat = 34
-  private static let kTrailingActionsWidth: CGFloat = 132
-  private static let kIconButtonSize: CGFloat = 28
-  private static let kNameDisplayMaxLen = 36
+  private static let kPanelWidth: CGFloat = 380
+  private static let kRowHeight: CGFloat = 32
+  private static let kRowSpacing: CGFloat = 8
 
   private var contentWidthConstraint: NSLayoutConstraint?
+
+  /// Aktif transferde paneli her ilerleme güncellemesinde baştan kurmamak için:
+  /// satır yapısı aynı kaldığı sürece yalnızca ilerleme çubukları güncellenir;
+  /// böylece bekleyen satırlardaki ✕/✓ butonları kararlı ve basılabilir kalır.
+  private var fileProgressBars: [String: NSProgressIndicator] = [:]
+  private var renderedFileSignature = ""
 
   init(kind: Kind) {
     self.kind = kind
@@ -158,11 +172,63 @@ private final class AuxiliaryPanel: NSPanel {
     titleLabel.font = .systemFont(ofSize: 14, weight: .semibold)
     titleLabel.lineBreakMode = .byTruncatingTail
     titleLabel.maximumNumberOfLines = 1
+    titleLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
+
+    let closeConfig = NSImage.SymbolConfiguration(pointSize: 11, weight: .semibold)
+    closeButton.image = NSImage(
+      systemSymbolName: "xmark",
+      accessibilityDescription: "Kapat"
+    )?.withSymbolConfiguration(closeConfig)
+    closeButton.imagePosition = .imageOnly
+    closeButton.bezelStyle = .regularSquare
+    closeButton.isBordered = false
+    closeButton.contentTintColor = .secondaryLabelColor
+    closeButton.toolTip = "Paneli kapat"
+    closeButton.translatesAutoresizingMaskIntoConstraints = false
+    closeButton.widthAnchor.constraint(equalToConstant: 18).isActive = true
+    closeButton.heightAnchor.constraint(equalToConstant: 18).isActive = true
+    closeButton.setContentHuggingPriority(.required, for: .horizontal)
+    closeButton.setContentCompressionResistancePriority(.required, for: .horizontal)
+    let closeHandler = ButtonHandler(action: { [weak self] in
+      guard let self else { return }
+      self.actionHandler?("panel_dismiss", ["kind": self.panelKindName])
+    })
+    objc_setAssociatedObject(
+      closeButton, &ButtonHandler.key, closeHandler, .OBJC_ASSOCIATION_RETAIN)
+    closeButton.target = closeHandler
+    closeButton.action = #selector(ButtonHandler.invoke)
 
     subtitleLabel.font = .systemFont(ofSize: 12)
     subtitleLabel.textColor = .secondaryLabelColor
     subtitleLabel.lineBreakMode = .byTruncatingTail
     subtitleLabel.maximumNumberOfLines = 2
+
+    avatarBadge.translatesAutoresizingMaskIntoConstraints = false
+    avatarBadge.widthAnchor.constraint(equalToConstant: 38).isActive = true
+    avatarBadge.heightAnchor.constraint(equalToConstant: 38).isActive = true
+    avatarBadge.setContentHuggingPriority(.required, for: .horizontal)
+    avatarBadge.isHidden = true
+
+    // Başlık + alt yazı dikey blok.
+    titleBlock.orientation = .vertical
+    titleBlock.alignment = .leading
+    titleBlock.spacing = 2
+    titleBlock.addArrangedSubview(titleLabel)
+    titleBlock.addArrangedSubview(subtitleLabel)
+
+    // Avatar + başlık bloğu (dikeyde ortalı).
+    innerHeader.orientation = .horizontal
+    innerHeader.alignment = .centerY
+    innerHeader.spacing = 10
+    innerHeader.addArrangedSubview(avatarBadge)
+    innerHeader.addArrangedSubview(titleBlock)
+
+    // Kapatma butonu sağ üstte kalsın diye header'ı üstten hizala.
+    headerRow.orientation = .horizontal
+    headerRow.alignment = .top
+    headerRow.spacing = 8
+    headerRow.addArrangedSubview(innerHeader)
+    headerRow.addArrangedSubview(closeButton)
 
     spinner.style = .spinning
     spinner.controlSize = .small
@@ -177,9 +243,10 @@ private final class AuxiliaryPanel: NSPanel {
     buttonBar.orientation = .horizontal
     buttonBar.spacing = 8
 
+    listStack.orientation = .vertical
     listStack.distribution = .fill
     listStack.alignment = .width
-    listStack.spacing = 6
+    listStack.spacing = Self.kRowSpacing
     listStack.isHidden = true
 
     let content = NSView()
@@ -187,8 +254,7 @@ private final class AuxiliaryPanel: NSPanel {
     content.addSubview(effectView)
     effectView.addSubview(stackView)
 
-    stackView.addArrangedSubview(titleLabel)
-    stackView.addArrangedSubview(subtitleLabel)
+    stackView.addArrangedSubview(headerRow)
     stackView.addArrangedSubview(spinner)
     stackView.addArrangedSubview(listStack)
     stackView.addArrangedSubview(buttonBar)
@@ -230,6 +296,14 @@ private final class AuxiliaryPanel: NSPanel {
     orderOut(nil)
   }
 
+  private var panelKindName: String {
+    switch kind {
+    case .reconnect: return "reconnect"
+    case .files: return "files"
+    case .hud: return "hud"
+    }
+  }
+
   // MARK: Reconnect
 
   func updateReconnect(
@@ -241,10 +315,24 @@ private final class AuxiliaryPanel: NSPanel {
     clearList()
     listStack.isHidden = true
 
-    titleLabel.stringValue = data["title"] as? String ?? "Bağlantı isteği"
+    let title = data["title"] as? String ?? "Bağlantı isteği"
+    titleLabel.stringValue = title
     subtitleLabel.stringValue = data["subtitle"] as? String ?? ""
+    subtitleLabel.isHidden = (data["subtitle"] as? String ?? "").isEmpty
 
     let phase = data["phase"] as? String ?? "prompt"
+
+    // Sol tarafta gönderen cihazın türüne göre dairesel avatar (kopmada kırmızı).
+    let deviceName = (data["fromDeviceName"] as? String ?? title)
+    if phase == "disconnected" {
+      avatarBadge.setSymbol("wifi.slash")
+      avatarBadge.setStyle(disconnected: true)
+    } else {
+      avatarBadge.setSymbol(Self.deviceSymbol(for: deviceName))
+      avatarBadge.setStyle(disconnected: false)
+    }
+    avatarBadge.isHidden = false
+
     let deviceId = data["fromDeviceId"] as? String ?? ""
     let createdAt = data["clientCreatedAt"] as? Int ?? 0
     let payload: [String: Any] = [
@@ -252,40 +340,94 @@ private final class AuxiliaryPanel: NSPanel {
       "clientCreatedAt": createdAt,
     ]
 
+    // Yükseklik = üst boşluk(14) + başlık satırı(avatar 38) + ara(8) + içerik + alt boşluk(14)
     switch phase {
     case "connecting":
       spinner.isHidden = false
       spinner.startAnimation(nil)
       buttonBar.isHidden = true
-      applyPanelSize(height: 116)
+      // 14 + 38 + 8 + 18(spinner) + 14
+      applyPanelSize(height: 92)
     case "connected":
       spinner.stopAnimation(nil)
       spinner.isHidden = true
       buttonBar.isHidden = true
-      titleLabel.stringValue = "✓ " + (data["title"] as? String ?? "Bağlandı")
-      applyPanelSize(height: 100)
+      // 14 + 38 + 14 (yalnızca başlık satırı)
+      applyPanelSize(height: 80)
+    case "disconnected":
+      spinner.stopAnimation(nil)
+      spinner.isHidden = true
+      buttonBar.isHidden = true
+      // Başlık + alt başlık (kopma nedeni) sığsın diye biraz daha yüksek.
+      applyPanelSize(height: 86)
     default:
       spinner.stopAnimation(nil)
       spinner.isHidden = true
       buttonBar.isHidden = false
-      addButton("Reddet", style: .plain) { [weak self] in
+      buttonBar.distribution = .fillEqually
+      addButton("Reddet", style: .plain, large: true) { [weak self] in
         self?.actionHandler?("reconnect_reject", payload)
       }
-      addSpacer()
-      addButton("Onayla", style: .prominent) { [weak self] in
+      addButton("Onayla", style: .prominent, large: true) { [weak self] in
         self?.actionHandler?("reconnect_approve", payload)
       }
-      applyPanelSize(height: 132)
+      // 14 + 38 + 8 + 34(buton) + 14
+      applyPanelSize(height: 108)
     }
+  }
+
+  /// Cihaz adından platforma göre SF Symbol seçer.
+  private static func deviceSymbol(for name: String) -> String {
+    let n = name.lowercased()
+    if n.contains("ipad") { return "ipad" }
+    if n.contains("iphone") { return "iphone" }
+    if n.contains("macbook") { return "laptopcomputer" }
+    if n.contains("imac") || n.contains("mac") { return "desktopcomputer" }
+    if n.contains("android") || n.contains("pixel") || n.contains("galaxy") {
+      return "candybarphone"
+    }
+    if n.contains("windows") || n.contains("pc") { return "pc" }
+    return "iphone"
   }
 
   // MARK: Files
 
+  /// Dosya panelini günceller. Satır yapısı (dosya kimliği + aşama + toplu
+  /// aksiyon görünürlüğü) değişmediyse SADECE ilerleme çubuklarını yerinde
+  /// günceller ve `false` döner (yeniden konumlandırma/yeniden kurma yok).
+  /// Yapı değiştiyse satırları baştan kurar ve `true` döner.
+  @discardableResult
   func updateFiles(
     _ data: [String: Any],
     handler: @escaping (String, [String: Any]) -> Void
-  ) {
+  ) -> Bool {
     actionHandler = handler
+
+    let files = data["items"] as? [[String: Any]] ?? []
+    let showBulk = data["showBulkActions"] as? Bool ?? !files.isEmpty
+    let shown = Array(files.prefix(8))
+
+    let signature = shown.map { file -> String in
+      let id = file["id"] as? String ?? ""
+      let phase = file["phase"] as? String ?? "pending"
+      return "\(id):\(phase)"
+    }.joined(separator: "|") + ";bulk=\(showBulk)"
+
+    // Yapı aynı → yalnızca ilerleme çubuklarını güncelle, paneli yeniden kurma.
+    if signature == renderedFileSignature && !shown.isEmpty {
+      for file in shown {
+        let id = file["id"] as? String ?? ""
+        guard let bar = fileProgressBars[id] else { continue }
+        let phase = file["phase"] as? String ?? "transferring"
+        var progress = file["progress"] as? Double ?? 0
+        if phase == "completed" { progress = 1 }
+        bar.doubleValue = progress
+      }
+      return false
+    }
+
+    // Yapı değişti → satırları baştan kur.
+    renderedFileSignature = signature
     spinner.stopAnimation(nil)
     spinner.isHidden = true
     clearButtons()
@@ -293,12 +435,10 @@ private final class AuxiliaryPanel: NSPanel {
 
     titleLabel.stringValue = data["title"] as? String ?? "Dosya isteği"
     subtitleLabel.stringValue = data["subtitle"] as? String ?? ""
+    listStack.isHidden = shown.isEmpty
 
-    let files = data["items"] as? [[String: Any]] ?? []
-    let showBulk = data["showBulkActions"] as? Bool ?? !files.isEmpty
-    listStack.isHidden = files.isEmpty
-
-    for file in files.prefix(8) {
+    var listHeight: CGFloat = 0
+    for (index, file) in shown.enumerated() {
       let phase = file["phase"] as? String ?? "pending"
       if phase == "pending" {
         let id = file["id"] as? String ?? ""
@@ -307,6 +447,8 @@ private final class AuxiliaryPanel: NSPanel {
       } else {
         addInlineProgressRow(file)
       }
+      listHeight += Self.kRowHeight
+      if index < shown.count - 1 { listHeight += Self.kRowSpacing }
     }
 
     buttonBar.isHidden = !showBulk
@@ -320,12 +462,13 @@ private final class AuxiliaryPanel: NSPanel {
       }
     }
 
-    var height = showBulk ? 132.0 : 88.0
-    height += CGFloat(min(files.count, 8)) * ( Self.kFileRowHeight + 6)
-    applyPanelSize(height: min(height, 520))
+    // Üst boşluk(14) + başlık(20) + altyazı(16) + stack aralıkları(8*2) + alt boşluk(14)
+    var height: CGFloat = 14 + 20 + 16 + 8 + 14
+    if !shown.isEmpty { height += listHeight + 8 }
+    if showBulk { height += 32 + 8 }
+    applyPanelSize(height: min(height, 540))
+    return true
   }
-
-  // kFileRowHeight etc. defined above init
 
   // MARK: HUD
 
@@ -366,6 +509,7 @@ private final class AuxiliaryPanel: NSPanel {
 
   private func clearList() {
     listStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
+    fileProgressBars.removeAll()
   }
 
   private func addSpacer() {
@@ -379,12 +523,36 @@ private final class AuxiliaryPanel: NSPanel {
   private func addButton(
     _ title: String,
     style: ButtonStyle,
+    large: Bool = false,
     action: @escaping () -> Void
   ) {
     let button = NSButton(title: title, target: nil, action: nil)
-    button.bezelStyle = style == .prominent ? .rounded : .roundRect
+    button.bezelStyle = .rounded
+    if large {
+      button.controlSize = .large
+      button.translatesAutoresizingMaskIntoConstraints = false
+      button.heightAnchor.constraint(equalToConstant: 34).isActive = true
+    }
     if style == .prominent {
       button.keyEquivalent = "\r"
+      // Pencere key olmadığı için (nonactivating panel) varsayılan buton mavi
+      // dolgusunu almaz; accent rengini ve beyaz metni elle ver.
+      button.bezelColor = .controlAccentColor
+      button.attributedTitle = NSAttributedString(
+        string: title,
+        attributes: [
+          .foregroundColor: NSColor.white,
+          .font: NSFont.systemFont(
+            ofSize: large ? 14 : 13, weight: .semibold),
+        ]
+      )
+    } else if large {
+      button.attributedTitle = NSAttributedString(
+        string: title,
+        attributes: [
+          .font: NSFont.systemFont(ofSize: 14, weight: .regular),
+        ]
+      )
     }
     let handler = ButtonHandler(action: action)
     objc_setAssociatedObject(button, &ButtonHandler.key, handler, .OBJC_ASSOCIATION_RETAIN)
@@ -393,148 +561,50 @@ private final class AuxiliaryPanel: NSPanel {
     buttonBar.addArrangedSubview(button)
   }
 
+  /// Onay bekleyen dosya: tek satır → [ad .......... genişler]  [✕] [✓]
   private func addPendingFileRow(name: String, fileId: String) {
-    let row = makeFileRowStack()
-
-    let label = makeNameLabel(truncateDisplayName(name))
-    let reject = makeIconButton("✕")
-    let approve = makeIconButton("✓")
-
-    wireIconButton(reject, action: { [weak self] in
-      self?.actionHandler?("file_reject", ["fileId": fileId])
-    })
-    wireIconButton(approve, action: { [weak self] in
-      self?.actionHandler?("file_accept", ["fileId": fileId])
-    })
-
-    let actions = NSStackView(views: [reject, approve])
-    actions.orientation = .horizontal
-    actions.spacing = 6
-    actions.alignment = .centerY
-    actions.setContentHuggingPriority(.required, for: .horizontal)
-    actions.setContentCompressionResistancePriority(.required, for: .horizontal)
-    actions.translatesAutoresizingMaskIntoConstraints = false
-    actions.widthAnchor.constraint(equalToConstant: Self.kTrailingActionsWidth).isActive = true
-
-    row.addArrangedSubview(label)
-    row.addArrangedSubview(actions)
-    attachFileRow(row)
-  }
-
-  private func addInlineProgressRow(_ item: [String: Any]) {
-    let name = item["name"] as? String ?? "Dosya"
-    let progress = item["progress"] as? Double ?? 0
-    let phase = item["phase"] as? String ?? "transferring"
-
-    let row = makeFileRowStack()
-    let label = makeNameLabel(truncateDisplayName(name))
-
-    let barContainer = NSView()
-    barContainer.translatesAutoresizingMaskIntoConstraints = false
-    barContainer.widthAnchor.constraint(equalToConstant: Self.kTrailingActionsWidth).isActive = true
-
-    let bar = NSProgressIndicator()
-    bar.isIndeterminate = false
-    bar.minValue = 0
-    bar.maxValue = 1
-    bar.doubleValue = progress
-    bar.controlSize = .small
-    bar.translatesAutoresizingMaskIntoConstraints = false
-
-    barContainer.addSubview(bar)
-    NSLayoutConstraint.activate([
-      bar.leadingAnchor.constraint(equalTo: barContainer.leadingAnchor),
-      bar.trailingAnchor.constraint(equalTo: barContainer.trailingAnchor),
-      bar.centerYAnchor.constraint(equalTo: barContainer.centerYAnchor),
-    ])
-
-    if phase == "completed" {
-      bar.doubleValue = 1
-    }
-
-    row.addArrangedSubview(label)
-    row.addArrangedSubview(barContainer)
-    attachFileRow(row)
-  }
-
-  private func makeFileRowStack() -> NSStackView {
-    let row = NSStackView()
-    row.orientation = .horizontal
-    row.alignment = .centerY
-    row.spacing = 10
-    row.distribution = .fill
+    let row = NSView()
     row.translatesAutoresizingMaskIntoConstraints = false
-    row.heightAnchor.constraint(equalToConstant: Self.kFileRowHeight).isActive = true
-    return row
-  }
 
-  private func attachFileRow(_ row: NSStackView) {
-    listStack.addArrangedSubview(row)
-    row.widthAnchor.constraint(equalTo: listStack.widthAnchor).isActive = true
-  }
+    let label = makeNameLabel(name)
 
-  private func truncateDisplayName(_ name: String) -> String {
-    if name.count <= Self.kNameDisplayMaxLen { return name }
-    let ext: String
-    if let dot = name.lastIndex(of: ".") {
-      ext = String(name[dot...])
-    } else {
-      ext = ""
+    let reject = makeIconButton("✕")
+    wireIconButton(reject) { [weak self] in
+      self?.actionHandler?("file_reject", ["fileId": fileId])
     }
-    let baseMax = Self.kNameDisplayMaxLen - ext.count - 1
-    if baseMax < 8 {
-      return String(name.prefix(Self.kNameDisplayMaxLen - 1)) + "…"
+    let approve = makeIconButton("✓")
+    wireIconButton(approve) { [weak self] in
+      self?.actionHandler?("file_accept", ["fileId": fileId])
     }
-    return String(name.prefix(baseMax)) + "…" + ext
+
+    row.addSubview(label)
+    row.addSubview(reject)
+    row.addSubview(approve)
+
+    NSLayoutConstraint.activate([
+      approve.trailingAnchor.constraint(equalTo: row.trailingAnchor),
+      approve.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+      reject.trailingAnchor.constraint(equalTo: approve.leadingAnchor, constant: -8),
+      reject.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+      label.leadingAnchor.constraint(equalTo: row.leadingAnchor),
+      label.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+      label.trailingAnchor.constraint(lessThanOrEqualTo: reject.leadingAnchor, constant: -10),
+    ])
+    attachRow(row, height: Self.kRowHeight)
   }
 
-  private func makeNameLabel(_ name: String) -> NSTextField {
-    let label = NSTextField(labelWithString: name)
-    label.lineBreakMode = .byTruncatingMiddle
-    label.font = .systemFont(ofSize: 12)
-    label.maximumNumberOfLines = 1
-    label.translatesAutoresizingMaskIntoConstraints = false
-    label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-    label.setContentHuggingPriority(.defaultLow, for: .horizontal)
-    return label
-  }
-
-  private func wireIconButton(_ button: NSButton, action: @escaping () -> Void) {
-    let handler = ButtonHandler(action: action)
-    objc_setAssociatedObject(button, &ButtonHandler.key, handler, .OBJC_ASSOCIATION_RETAIN)
-    button.target = handler
-    button.action = #selector(ButtonHandler.invoke)
-  }
-
-  private func addFileRow(name: String, fileId: String) {
-    addPendingFileRow(name: name, fileId: fileId)
-  }
-
-  private func makeIconButton(_ title: String) -> NSButton {
-    let button = NSButton(title: title, target: nil, action: nil)
-    button.bezelStyle = .roundRect
-    button.font = .systemFont(ofSize: 13, weight: .semibold)
-    button.translatesAutoresizingMaskIntoConstraints = false
-    button.widthAnchor.constraint(equalToConstant: Self.kIconButtonSize).isActive = true
-    button.heightAnchor.constraint(equalToConstant: Self.kIconButtonSize).isActive = true
-    button.setContentHuggingPriority(.required, for: .horizontal)
-    button.setContentCompressionResistancePriority(.required, for: .horizontal)
-    return button
-  }
-
-  private func addProgressRow(_ item: [String: Any]) {
+  /// Onaylanmış dosya: tek satır → [ad ...]  [========== ilerleme çubuğu ==========]
+  private func addInlineProgressRow(_ item: [String: Any]) {
+    let id = item["id"] as? String ?? ""
     let name = item["name"] as? String ?? "Dosya"
-    let progress = item["progress"] as? Double ?? 0
-    let status = item["status"] as? String ?? "Alınıyor"
+    let phase = item["phase"] as? String ?? "transferring"
+    var progress = item["progress"] as? Double ?? 0
+    if phase == "completed" { progress = 1 }
 
-    let box = NSStackView()
-    box.orientation = .vertical
-    box.alignment = .leading
-    box.spacing = 3
-    box.translatesAutoresizingMaskIntoConstraints = false
+    let row = NSView()
+    row.translatesAutoresizingMaskIntoConstraints = false
 
-    let label = NSTextField(labelWithString: name)
-    label.lineBreakMode = .byTruncatingMiddle
+    let label = makeNameLabel(name)
     label.font = .systemFont(ofSize: 12, weight: .medium)
 
     let bar = NSProgressIndicator()
@@ -545,16 +615,90 @@ private final class AuxiliaryPanel: NSPanel {
     bar.controlSize = .small
     bar.translatesAutoresizingMaskIntoConstraints = false
 
+    row.addSubview(label)
+    row.addSubview(bar)
+
+    NSLayoutConstraint.activate([
+      bar.trailingAnchor.constraint(equalTo: row.trailingAnchor),
+      bar.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+      bar.heightAnchor.constraint(equalToConstant: 6),
+      bar.widthAnchor.constraint(equalTo: row.widthAnchor, multiplier: 0.5),
+      label.leadingAnchor.constraint(equalTo: row.leadingAnchor),
+      label.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+      label.trailingAnchor.constraint(lessThanOrEqualTo: bar.leadingAnchor, constant: -12),
+    ])
+    if !id.isEmpty { fileProgressBars[id] = bar }
+    attachRow(row, height: Self.kRowHeight)
+  }
+
+  private func attachRow(_ row: NSView, height: CGFloat) {
+    row.translatesAutoresizingMaskIntoConstraints = false
+    row.heightAnchor.constraint(equalToConstant: height).isActive = true
+    listStack.addArrangedSubview(row)
+    row.widthAnchor.constraint(equalTo: listStack.widthAnchor).isActive = true
+  }
+
+  private func makeNameLabel(_ name: String) -> NSTextField {
+    let label = NSTextField(labelWithString: name)
+    label.lineBreakMode = .byTruncatingMiddle
+    label.cell?.truncatesLastVisibleLine = true
+    label.font = .systemFont(ofSize: 12)
+    label.maximumNumberOfLines = 1
+    label.toolTip = name
+    label.translatesAutoresizingMaskIntoConstraints = false
+    label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+    label.setContentHuggingPriority(.defaultLow, for: .horizontal)
+    return label
+  }
+
+  /// Eski stil köşeleri yuvarlatılmış metin butonu (✕ / ✓).
+  private func makeIconButton(_ title: String) -> NSButton {
+    let button = NSButton(title: title, target: nil, action: nil)
+    button.bezelStyle = .roundRect
+    button.font = .systemFont(ofSize: 13, weight: .semibold)
+    button.translatesAutoresizingMaskIntoConstraints = false
+    button.widthAnchor.constraint(equalToConstant: 30).isActive = true
+    button.heightAnchor.constraint(equalToConstant: 24).isActive = true
+    button.setContentHuggingPriority(.required, for: .horizontal)
+    button.setContentCompressionResistancePriority(.required, for: .horizontal)
+    return button
+  }
+
+  private func wireIconButton(_ button: NSButton, action: @escaping () -> Void) {
+    let handler = ButtonHandler(action: action)
+    objc_setAssociatedObject(button, &ButtonHandler.key, handler, .OBJC_ASSOCIATION_RETAIN)
+    button.target = handler
+    button.action = #selector(ButtonHandler.invoke)
+  }
+
+  /// HUD paneli satırı (ad + tam genişlik çubuk + durum metni).
+  private func addProgressRow(_ item: [String: Any]) {
+    let name = item["name"] as? String ?? "Dosya"
+    let progress = item["progress"] as? Double ?? 0
+    let status = item["status"] as? String ?? "Alınıyor"
+
+    let label = makeNameLabel(name)
+    label.font = .systemFont(ofSize: 12, weight: .medium)
+
     let statusLabel = NSTextField(labelWithString: status)
     statusLabel.font = .systemFont(ofSize: 11)
     statusLabel.textColor = .secondaryLabelColor
 
-    box.addArrangedSubview(label)
-    box.addArrangedSubview(bar)
-    box.addArrangedSubview(statusLabel)
-    listStack.addArrangedSubview(box)
-    box.widthAnchor.constraint(equalTo: listStack.widthAnchor).isActive = true
-    bar.widthAnchor.constraint(equalTo: box.widthAnchor).isActive = true
+    let bar = NSProgressIndicator()
+    bar.isIndeterminate = false
+    bar.minValue = 0
+    bar.maxValue = 1
+    bar.doubleValue = progress
+    bar.controlSize = .small
+    bar.translatesAutoresizingMaskIntoConstraints = false
+    bar.heightAnchor.constraint(equalToConstant: 6).isActive = true
+
+    let box = NSStackView(views: [label, bar, statusLabel])
+    box.orientation = .vertical
+    box.alignment = .width
+    box.spacing = 4
+    box.distribution = .fill
+    attachRow(box, height: 56)
   }
 
   private func addProgressPlaceholder(_ text: String) {
@@ -562,6 +706,68 @@ private final class AuxiliaryPanel: NSPanel {
     label.font = .systemFont(ofSize: 12)
     label.textColor = .secondaryLabelColor
     listStack.addArrangedSubview(label)
+  }
+}
+
+/// Sol üstte gönderen cihazı temsil eden, mavi gradyanlı dairesel avatar.
+private final class AvatarBadge: NSView {
+  private let gradient = CAGradientLayer()
+  private let iconView = NSImageView()
+
+  init() {
+    super.init(frame: .zero)
+    wantsLayer = true
+    layer?.masksToBounds = true
+    gradient.colors = [
+      NSColor(calibratedRed: 0.33, green: 0.68, blue: 1.0, alpha: 1).cgColor,
+      NSColor(calibratedRed: 0.0, green: 0.42, blue: 0.95, alpha: 1).cgColor,
+    ]
+    gradient.startPoint = CGPoint(x: 0, y: 1)
+    gradient.endPoint = CGPoint(x: 1, y: 0)
+    layer?.addSublayer(gradient)
+
+    iconView.imageScaling = .scaleProportionallyUpOrDown
+    iconView.contentTintColor = .white
+    iconView.translatesAutoresizingMaskIntoConstraints = false
+    addSubview(iconView)
+    NSLayoutConstraint.activate([
+      iconView.centerXAnchor.constraint(equalTo: centerXAnchor),
+      iconView.centerYAnchor.constraint(equalTo: centerYAnchor),
+      iconView.widthAnchor.constraint(equalToConstant: 20),
+      iconView.heightAnchor.constraint(equalToConstant: 20),
+    ])
+  }
+
+  required init?(coder: NSCoder) {
+    fatalError("init(coder:) has not been implemented")
+  }
+
+  func setSymbol(_ name: String) {
+    let cfg = NSImage.SymbolConfiguration(pointSize: 15, weight: .semibold)
+    let image = NSImage(systemSymbolName: name, accessibilityDescription: nil)
+      ?? NSImage(systemSymbolName: "iphone", accessibilityDescription: nil)
+    iconView.image = image?.withSymbolConfiguration(cfg)
+  }
+
+  /// Bağlantı koptu durumunda kırmızı, aksi halde mavi gradyan.
+  func setStyle(disconnected: Bool) {
+    if disconnected {
+      gradient.colors = [
+        NSColor(calibratedRed: 1.0, green: 0.45, blue: 0.40, alpha: 1).cgColor,
+        NSColor(calibratedRed: 0.85, green: 0.16, blue: 0.16, alpha: 1).cgColor,
+      ]
+    } else {
+      gradient.colors = [
+        NSColor(calibratedRed: 0.33, green: 0.68, blue: 1.0, alpha: 1).cgColor,
+        NSColor(calibratedRed: 0.0, green: 0.42, blue: 0.95, alpha: 1).cgColor,
+      ]
+    }
+  }
+
+  override func layout() {
+    super.layout()
+    gradient.frame = bounds
+    gradient.cornerRadius = bounds.height / 2
   }
 }
 

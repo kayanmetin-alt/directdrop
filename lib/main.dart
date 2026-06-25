@@ -13,6 +13,7 @@ import 'screens/home_screen.dart';
 import 'screens/incoming_connect_screen.dart';
 import 'screens/incoming_reconnect_screen.dart';
 import 'screens/recent_connect_screen.dart';
+import 'screens/settings_screen.dart';
 import 'services/app_version_service.dart';
 import 'services/desktop_background_service.dart';
 import 'services/desktop_overlay_service.dart';
@@ -33,6 +34,7 @@ import 'services/startup_gate.dart';
 import 'services/transfer_history_service.dart';
 import 'services/wake_listener_service.dart';
 import 'utils/directdrop_scroll_behavior.dart';
+import 'utils/user_facing_error.dart';
 import 'widgets/incoming_reconnect_prompt.dart';
 import 'models/reconnect_request.dart';
 import 'models/paired_device.dart';
@@ -337,8 +339,9 @@ Future<void> _syncOverlayFilesBanner() async {
   final overlay = DesktopOverlayService.instance;
 
   if (awaiting.isEmpty) {
-    final items = controller?.fileTransfer?.items ?? const [];
-    await overlay.onTransferItemsChanged(items);
+    await overlay.onTransferItemsChanged(
+      controller?.fileTransfer?.items ?? const [],
+    );
     return;
   }
 
@@ -360,18 +363,18 @@ Future<void> _handOffPendingRequestsToOverlay() async {
   final controller = ActiveSessionRegistry.instance.activeController;
   if (controller == null) return;
 
+  // Aktif oturumu panele bağla: arka planda bağlantı koparsa sağ panelde
+  // "bağlantı koptu" bildirimi gösterilebilsin.
+  if (controller.isConnected) {
+    DesktopOverlayService.instance.attachOverlaySession(controller);
+  }
+
   final awaiting = controller.awaitingApprovalFiles;
   if (awaiting.isNotEmpty) {
     await DesktopOverlayService.instance.showIncomingFilesBanner(
       peerName: controller.peerDisplayName ?? 'Cihaz',
       files: awaiting,
     );
-    return;
-  }
-
-  final items = controller.fileTransfer?.items ?? const [];
-  if (items.isNotEmpty) {
-    await DesktopOverlayService.instance.onTransferItemsChanged(items);
   }
 }
 
@@ -482,6 +485,17 @@ void _wireAutoReconnect() {
     DesktopBackgroundService.instance.onShowMainApp = () async {
       await _openMainAppFromTray();
     };
+    // Menü çubuğu menüsünden "Ayarlar": pencereyi aç + Ayarlar ekranını göster.
+    DesktopBackgroundService.instance.onOpenSettings = () async {
+      await DesktopBackgroundService.instance.showMainWindow(force: true);
+      final nav = rootNavigatorKey.currentState;
+      if (nav == null) return;
+      nav.push(
+        MaterialPageRoute<void>(
+          builder: (_) => const SettingsScreen(),
+        ),
+      );
+    };
     DesktopBackgroundService.instance.onMainWindowShown = () {
       IncomingReconnectPrompt.retryPendingIfAny();
     };
@@ -500,6 +514,13 @@ void _wireAutoReconnect() {
 }
 
 Future<void> _connectToPeerFromTray(PairedDevice peer) async {
+  // Pencere gizliyse: ana uygulamayı açmadan sağ panelden bağlan.
+  if (DesktopBackgroundService.isSupported &&
+      await DesktopBackgroundService.instance.isMainWindowHidden()) {
+    await _connectToPeerViaOverlay(peer);
+    return;
+  }
+
   await DesktopBackgroundService.instance.showMainWindow();
   final nav = rootNavigatorKey.currentState;
   if (nav == null) return;
@@ -507,6 +528,47 @@ Future<void> _connectToPeerFromTray(PairedDevice peer) async {
     MaterialPageRoute<void>(
       builder: (_) => RecentConnectScreen(peer: peer),
     ),
+  );
+}
+
+/// Tray menüsünden başlatılan giden bağlantıyı sağ panelden (ekransız) yürütür:
+/// istek gönderildi -> onay bekleniyor -> bağlanılıyor -> bağlandı (otomatik kapanır).
+Future<void> _connectToPeerViaOverlay(PairedDevice peer) async {
+  final overlay = DesktopOverlayService.instance;
+  final service = RecentConnectionService.instance;
+
+  await overlay.beginOutgoingConnect(peer.displayName);
+
+  TransferSessionController controller;
+  try {
+    controller = await service.connectToPeer(
+      peer,
+      onProgress: (message) {
+        unawaited(overlay.updateOutgoingStatus(message));
+      },
+    );
+  } catch (e, stack) {
+    debugPrint('Tray üzerinden bağlanma başarısız: $e\n$stack');
+    await overlay.showDisconnectedNotice(peer.displayName, userFacingMessage(e));
+    return;
+  }
+
+  ActiveSessionRegistry.instance.register(controller);
+  service.clearIncomingInvite();
+  overlay.enableOverlayOnlySession();
+  // Bağlanınca "X bağlandı" gösterip paneli otomatik kapatır.
+  overlay.attachReconnectController(controller);
+  // Sonraki dosya transferleri ve kopma tespiti için oturumu izle.
+  overlay.attachOverlaySession(controller);
+
+  // Pencere açılırsa aktif oturum ana gövdede gösterilebilsin.
+  _presentActiveSessionInMainBody(
+    ReconnectRequest(
+      fromDeviceId: peer.deviceId,
+      fromDeviceName: peer.displayName,
+      clientCreatedAt: DateTime.now().millisecondsSinceEpoch,
+    ),
+    controller,
   );
 }
 

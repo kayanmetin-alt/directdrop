@@ -80,6 +80,7 @@ class TransferCheckpointService {
 
   TransferStatus _persistedStatus(TransferStatus status) {
     if (status == TransferStatus.inProgress ||
+        status == TransferStatus.queued ||
         status == TransferStatus.failed) {
       return TransferStatus.paused;
     }

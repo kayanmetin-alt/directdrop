@@ -459,7 +459,16 @@ class RecentConnectionService extends ChangeNotifier {
 
     final foreground = _isAppInForeground();
 
-    // Ana pencere görünürken uygulama içi onay ekranı.
+    // Mobilde onay yalnızca tam ekran "gelen arama" ekranıyla yapılır (banner'da
+    // onay/ret yok). Bu yüzden ön plan/arka plan kontrolüne takılmadan her
+    // durumda tam ekranı tetikle; ekran navigator hazır olunca açılır, arka
+    // plandaysa öne gelince hemen görünür (20-30 sn gecikme olmaz).
+    if (Platform.isIOS || Platform.isAndroid) {
+      onShowReconnectPrompt?.call(request);
+      return;
+    }
+
+    // Ana pencere görünürken uygulama içi onay ekranı (masaüstü).
     if (foreground) {
       onShowReconnectPrompt?.call(request);
       return;
