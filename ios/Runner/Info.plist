@@ -67,11 +67,11 @@
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
 	<key>NSCameraUsageDescription</key>
-	<string>QR kod okutmak için kamera erişimi gerekir.</string>
+	<string>DirectDrop uses the camera to scan QR codes when pairing devices. / Cihaz eşleştirirken QR kod okutmak için kamera erişimi gerekir.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>Dosya seçmek için fotoğraf kitaplığı erişimi gerekebilir.</string>
+	<string>DirectDrop accesses your photo library so you can select photos and videos to send. / Göndermek istediğiniz fotoğraf ve videoları seçebilmeniz için fotoğraf kitaplığı erişimi gerekir.</string>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>Aynı Wi-Fi ağındaki cihazlarla doğrudan, hızlı dosya transferi için yerel ağ erişimi gerekir.</string>
+	<string>DirectDrop uses the local network to set up a direct peer-to-peer connection with nearby devices on the same Wi-Fi; transfers also work over the internet when devices are on different networks. / Aynı Wi-Fi'daki cihazlarla doğrudan eşler arası bağlantı kurmak için yerel ağ erişimi kullanılır; cihazlar farklı ağlardayken aktarımlar internet üzerinden de çalışır.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>remote-notification</string>
@@ -81,8 +81,6 @@
 	<key>UIFileSharingEnabled</key>
 	<true/>
 	<key>LSSupportsOpeningDocumentsInPlace</key>
-	<true/>
-	<key>UISupportsDocumentBrowser</key>
 	<true/>
 	<key>LSApplicationQueriesSchemes</key>
 	<array>

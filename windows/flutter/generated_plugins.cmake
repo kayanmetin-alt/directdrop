@@ -4,6 +4,7 @@
 
 list(APPEND FLUTTER_PLUGIN_LIST
   desktop_drop
+  firebase_app_check
   firebase_auth
   firebase_core
   firebase_database

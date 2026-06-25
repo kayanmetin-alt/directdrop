@@ -72,6 +72,9 @@ class DesktopOverlayService extends ChangeNotifier {
   String? _filesPanelPeerName;
   final Map<String, _PanelFileRow> _panelFiles = {};
 
+  /// Menü çubuğundan başlatılan GİDEN dosya transferi panelde takip ediliyor mu.
+  bool _outgoingPanelActive = false;
+
   Timer? _filesPanelAutoHideTimer;
   Timer? _reconnectCloseTimer;
   bool _actionHandlerRegistered = false;
@@ -158,7 +161,8 @@ class DesktopOverlayService extends ChangeNotifier {
           files: awaiting,
         ),
       );
-    } else if (_panelFiles.isNotEmpty ||
+    } else if (_outgoingPanelActive ||
+        _panelFiles.isNotEmpty ||
         _approvedPendingIds.isNotEmpty ||
         banners.isNotEmpty) {
       unawaited(onTransferItemsChanged(items));
@@ -212,6 +216,7 @@ class DesktopOverlayService extends ChangeNotifier {
     _reconnectStatusOverride = null;
     _disconnectReason = '';
     _panelFiles.clear();
+    _outgoingPanelActive = false;
     _filesPanelAutoHideTimer?.cancel();
     _recentlyActiveIds.clear();
     notifyListeners();
@@ -402,6 +407,24 @@ class DesktopOverlayService extends ChangeNotifier {
     await _syncPanels();
   }
 
+  /// Menü çubuğundan başlatılan GİDEN dosya transferini sağ panelde takip eder.
+  /// Satırlar onay butonu olmadan ilerleme çubuğuyla görünür; X ile kapatılabilir
+  /// (transfer arka planda sürer).
+  Future<void> beginOutgoingFilesPanel({
+    required String peerName,
+    required TransferSessionController controller,
+  }) async {
+    if (!isSupported) return;
+    if (!await _shouldShowCornerPanels()) return;
+
+    _outgoingPanelActive = true;
+    _filesPanelPeerName = peerName;
+    _filesPanelAutoHideTimer?.cancel();
+    attachOverlaySession(controller);
+    notifyListeners();
+    await _syncPanels();
+  }
+
   /// Onay/ret: satır aynı panelde kalır; onayda butonlar kalkıp ilerleme çubuğu gelir.
   Future<void> markFileResolved(String fileId, {required bool approved}) async {
     if (!isSupported) return;
@@ -463,6 +486,22 @@ class DesktopOverlayService extends ChangeNotifier {
 
   void _syncPanelFilesFromTransferItems(List<TransferFileItem> items) {
     for (final item in items) {
+      // GİDEN transfer paneli: onay yok, sadece ilerleme/durum gösterilir.
+      if (item.direction == TransferDirection.sending) {
+        if (!_outgoingPanelActive) continue;
+        final done = item.status == TransferStatus.completed;
+        _panelFiles[item.id] = _PanelFileRow(
+          id: item.id,
+          name: item.name,
+          phase: done
+              ? _PanelFilePhase.completed
+              : _PanelFilePhase.transferring,
+          progress: item.progress.clamp(0.0, 1.0),
+          status: _outgoingStatusLabel(item.status),
+        );
+        continue;
+      }
+
       if (item.direction != TransferDirection.receiving) continue;
 
       if (item.status == TransferStatus.awaitingApproval) {
@@ -530,6 +569,7 @@ class DesktopOverlayService extends ChangeNotifier {
     _filesPanelAutoHideTimer?.cancel();
     _filesPanelAutoHideTimer = Timer(const Duration(seconds: 3), () {
       _panelFiles.clear();
+      _outgoingPanelActive = false;
       _recentlyActiveIds.clear();
       unawaited(_syncPanels());
       notifyListeners();
@@ -558,8 +598,10 @@ class DesktopOverlayService extends ChangeNotifier {
     _detachReconnectController();
     banners.clear();
     _panelFiles.clear();
+    _outgoingPanelActive = false;
     _recentlyActiveIds.clear();
     _approvedPendingIds.clear();
+    _rejectedFileIds.clear();
     _filesPanelPeerName = null;
     _reconnectPhase = ReconnectPanelPhase.prompt;
     _reconnectStatusOverride = null;
@@ -580,6 +622,7 @@ class DesktopOverlayService extends ChangeNotifier {
           !_rejectedFileIds.contains(i.id),
     );
     final hasPanelWork =
+        _outgoingPanelActive ||
         _panelFiles.isNotEmpty ||
         _approvedPendingIds.isNotEmpty ||
         banners.isNotEmpty;
@@ -621,6 +664,7 @@ class DesktopOverlayService extends ChangeNotifier {
     disableOverlayOnlySession();
     banners.clear();
     _panelFiles.clear();
+    _outgoingPanelActive = false;
     _recentlyActiveIds.clear();
     _rejectedFileIds.clear();
     _approvedPendingIds.clear();
@@ -640,6 +684,7 @@ class DesktopOverlayService extends ChangeNotifier {
     disableOverlayOnlySession();
     banners.clear();
     _panelFiles.clear();
+    _outgoingPanelActive = false;
     _recentlyActiveIds.clear();
     _rejectedFileIds.clear();
     _approvedPendingIds.clear();
@@ -677,13 +722,22 @@ class DesktopOverlayService extends ChangeNotifier {
           rows.where((r) => r.phase == _PanelFilePhase.pending).length;
       final peer = _filesPanelPeerName ?? _controller?.peerDisplayName ?? 'Cihaz';
 
+      final String title;
+      final String subtitle;
+      if (pendingCount > 0) {
+        title = '$peer dosya göndermek istiyor';
+        subtitle = '$pendingCount dosya onay bekliyor';
+      } else if (_outgoingPanelActive) {
+        title = '$peer cihazına gönderiliyor';
+        subtitle = '${rows.length} dosya';
+      } else {
+        title = 'Aktif transfer';
+        subtitle = peer;
+      }
+
       filesPayload = {
-        'title': pendingCount > 0
-            ? '$peer dosya göndermek istiyor'
-            : 'Aktif transfer',
-        'subtitle': pendingCount > 0
-            ? '$pendingCount dosya onay bekliyor'
-            : peer,
+        'title': title,
+        'subtitle': subtitle,
         'showBulkActions': pendingCount > 0,
         'items': [
           for (final row in rows.take(8))
@@ -814,6 +868,21 @@ class DesktopOverlayService extends ChangeNotifier {
         return 'Duraklatıldı';
       default:
         return 'Alınıyor';
+    }
+  }
+
+  String _outgoingStatusLabel(TransferStatus status) {
+    switch (status) {
+      case TransferStatus.completed:
+        return 'Gönderildi';
+      case TransferStatus.queued:
+        return 'Sıraya alındı';
+      case TransferStatus.verifying:
+        return 'Doğrulanıyor';
+      case TransferStatus.paused:
+        return 'Duraklatıldı';
+      default:
+        return 'Gönderiliyor';
     }
   }
 

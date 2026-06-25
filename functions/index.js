@@ -19,8 +19,12 @@ exports.onWakeRequestPush = functions
     const deviceId = context.params.deviceId;
     const db = getDatabase();
 
-    const tokenSnap = await db.ref(`devices/${deviceId}/fcmToken`).get();
-    const token = tokenSnap.val();
+    // FCM token artık istemci-okunur olmayan deviceTokens düğümünde tutulur.
+    // Geçiş döneminde eski devices/<id>/fcmToken yoluna geri düşülür.
+    let token = (await db.ref(`deviceTokens/${deviceId}`).get()).val();
+    if (!token || typeof token !== 'string') {
+      token = (await db.ref(`devices/${deviceId}/fcmToken`).get()).val();
+    }
     if (!token || typeof token !== 'string') {
       console.log(`FCM token yok: ${deviceId}`);
       return null;

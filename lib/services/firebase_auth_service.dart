@@ -40,7 +40,9 @@ class FirebaseAuthService {
   Future<void> _signInAnonymously() async {
     try {
       await _auth.signInAnonymously().timeout(_signInTimeout);
-      debugPrint('Firebase anonim oturum: ${_auth.currentUser?.uid}');
+      if (kDebugMode) {
+        debugPrint('Firebase anonim oturum: ${_auth.currentUser?.uid}');
+      }
     } on TimeoutException {
       throw StateError(
         'Firebase Auth zaman aşımı (macOS keychain). '

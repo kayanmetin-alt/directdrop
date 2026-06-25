@@ -419,8 +419,14 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
     await Firebase.initializeApp(
       options: DefaultFirebaseOptions.currentPlatform,
     );
-    debugPrint('Arka plan FCM: ${message.messageId} type=${message.data['type']}');
+    if (kDebugMode) {
+      debugPrint(
+        'Arka plan FCM: ${message.messageId} type=${message.data['type']}',
+      );
+    }
   } catch (e) {
-    debugPrint('Arka plan FCM handler: $e');
+    if (kDebugMode) {
+      debugPrint('Arka plan FCM handler: $e');
+    }
   }
 }

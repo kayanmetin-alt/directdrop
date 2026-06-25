@@ -27,10 +27,12 @@ class _IncomingConnectScreenState extends State<IncomingConnectScreen> {
   String? _error;
   bool _joining = false;
 
+  // Otomatik kabul yalnızca daha önce EŞLEŞTİRİLMİŞ bir deviceId için yapılır.
+  // Görünen ad taklit edilebildiğinden (isteyenden gelen alan) güven kararında
+  // kullanılmaz; aksi halde saldırgan tanıdık bir adla sessiz bağlantı kurabilir.
   bool get _isKnownPeer {
     return PairedDevicesService.instance.isKnownPeer(
       deviceId: widget.request.fromDeviceId,
-      displayName: widget.request.fromDeviceName,
     );
   }
 

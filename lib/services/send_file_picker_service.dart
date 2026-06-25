@@ -16,25 +16,6 @@ class SendFilePickerService {
   static const MethodChannel _mediaChannel =
       MethodChannel('com.directdrop.app/media_picker');
 
-  static Future<List<String>?> pickWithSourceChoice(
-    BuildContext context, {
-    bool preferJpeg = false,
-  }) async {
-    if (!Platform.isIOS && !Platform.isMacOS && !Platform.isAndroid) {
-      return _pickFromDeviceStorage();
-    }
-
-    final source = await pickSource(context);
-    if (source == null) return null;
-
-    switch (source) {
-      case SendFileSource.photosLibrary:
-        return _pickFromPhotosLibrary(preferJpeg: preferJpeg);
-      case SendFileSource.deviceStorage:
-        return _pickFromDeviceStorage();
-    }
-  }
-
   static Future<SendFileSource?> pickSource(BuildContext context) =>
       _showSourceSheet(context);
 

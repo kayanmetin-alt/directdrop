@@ -36,7 +36,7 @@
   <h2>Üçüncü taraf hizmetler</h2>
   <ul>
     <li><strong>Google Firebase</strong> (Authentication, Realtime Database, Cloud Messaging): eşleştirme, bildirim ve oturum yönetimi.</li>
-    <li><strong>Google STUN/TURN</strong> (WebRTC): bağlantı kurulumu; dosya içeriği bu sunuculardan geçmez.</li>
+    <li><strong>STUN/TURN sunucuları</strong> (WebRTC): bağlantı kurulumu için Google STUN ve Metered (OpenRelay) TURN sunucuları kullanılır. Cihazlar doğrudan bağlanabildiğinde dosya içeriği bu sunuculardan geçmez; doğrudan bağlantı kurulamadığında ise şifreli (DTLS-SRTP) trafik TURN sunucusu üzerinden aktarılabilir, ancak içerik sunucu tarafından okunamaz.</li>
   </ul>
 
   <h2>Veri saklama ve silme</h2>

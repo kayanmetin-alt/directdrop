@@ -150,18 +150,13 @@ class PairedDevicesService extends ChangeNotifier {
     return null;
   }
 
-  bool isKnownPeer({String? deviceId, String? displayName}) {
-    if (deviceId != null &&
+  /// Güven kararı YALNIZCA daha önce eşleştirilmiş deviceId ile verilir.
+  /// Görünen ad istemciden gelir ve taklit edilebilir; bu yüzden güvende
+  /// kullanılmaz (yalnızca görüntüleme amaçlıdır).
+  bool isKnownPeer({String? deviceId}) {
+    return deviceId != null &&
         deviceId.isNotEmpty &&
-        findByDeviceId(deviceId) != null) {
-      return true;
-    }
-    if (displayName != null &&
-        displayName.isNotEmpty &&
-        findByDisplayName(displayName) != null) {
-      return true;
-    }
-    return false;
+        findByDeviceId(deviceId) != null;
   }
 
   /// Firebase Auth sonrası cihaz kimliği değişmişse eşleşmeyi günceller.

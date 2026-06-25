@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -23,7 +24,9 @@ class ScreenshotCapture {
   static const roomCodeFile = '/tmp/directdrop_room_code.txt';
   static const readyFile = '/tmp/directdrop_screenshot_ready';
 
-  static bool get isEnabled => step.isNotEmpty;
+  // Release derlemelerinde otomasyon asla çalışmamalı; yanlışlıkla bir build
+  // bayrağı verilse bile kReleaseMode kontrolü devre dışı bırakır.
+  static bool get isEnabled => !kReleaseMode && step.isNotEmpty;
 
   static Future<void> clearLocalLists() async {
     final prefs = await SharedPreferences.getInstance();

@@ -29,12 +29,17 @@ class DesktopBackgroundService extends ChangeNotifier
   bool _trayActive = false;
   bool _isQuitting = false;
   bool _menuListenersAttached = false;
+  Timer? _menuRefreshDebounce;
 
   // UI gerektiren eylemler (cihaz penceresi açma) main.dart tarafından bağlanır.
   void Function(PairedDevice peer)? onConnectToPeer;
   void Function(ReconnectRequest request)? onApproveReconnect;
   Future<void> Function()? onShowMainApp;
   Future<void> Function()? onOpenSettings;
+  // Aktif bağlantı alt menüsü (menü çubuğundan dosya gönderme / bağlantıyı kesme).
+  Future<void> Function()? onTransferFilesToActivePeer;
+  Future<void> Function()? onTransferPhotosToActivePeer;
+  Future<void> Function()? onDisconnectActivePeer;
   void Function()? onMainWindowShown;
   Future<void> Function()? onMainWindowHidden;
 
@@ -135,7 +140,13 @@ class DesktopBackgroundService extends ChangeNotifier
 
   void _onMenuStateChanged() {
     if (!_trayActive) return;
-    unawaited(_refreshTrayMenu());
+    // Sık tetiklenen durum değişimlerinde (presence/auto-connect) menü ağacını
+    // her seferinde yeniden kurmamak için kısa bir debounce uygula.
+    _menuRefreshDebounce?.cancel();
+    _menuRefreshDebounce = Timer(const Duration(milliseconds: 350), () {
+      if (!_trayActive) return;
+      unawaited(_refreshTrayMenu());
+    });
   }
 
   bool shouldSkipGracefulShutdownOnPause() => keepsRunningInBackground;
@@ -241,22 +252,52 @@ class DesktopBackgroundService extends ChangeNotifier
       items.add(MenuItem.separator());
     }
 
-    // 3) Cihazlarım — seçince yeniden bağlanma.
-    final devices = PairedDevicesService.instance.devices;
-    if (devices.isNotEmpty) {
+    // 3) Aktif bağlantı varsa: "Cihaza bağlan" yerine bağlı cihaz adı + alt menü
+    //    (Dosya transfer / Bağlantıyı kes). Aksi halde cihaz listesinden bağlan.
+    final connected = controller != null &&
+        !controller.isDisposed &&
+        controller.isConnected;
+    if (connected) {
+      final peerName = controller.peerDisplayName ?? 'Bağlı cihaz';
       items.add(MenuItem.submenu(
-        label: 'Cihaza bağlan',
+        label: _shortName(peerName),
         submenu: Menu(
           items: [
-            for (final device in devices)
-              MenuItem(
-                key: 'connect:${device.deviceId}',
-                label: device.displayName,
+            MenuItem.submenu(
+              label: 'Dosya transfer',
+              submenu: Menu(
+                items: [
+                  MenuItem(key: 'transfer_files', label: 'Dosyalar'),
+                  MenuItem(
+                    key: 'transfer_photos',
+                    label: 'Fotoğraflar / Videolar',
+                  ),
+                ],
               ),
+            ),
+            MenuItem.separator(),
+            MenuItem(key: 'disconnect_active', label: 'Bağlantıyı kes'),
           ],
         ),
       ));
       items.add(MenuItem.separator());
+    } else {
+      final devices = PairedDevicesService.instance.devices;
+      if (devices.isNotEmpty) {
+        items.add(MenuItem.submenu(
+          label: 'Cihaza bağlan',
+          submenu: Menu(
+            items: [
+              for (final device in devices)
+                MenuItem(
+                  key: 'connect:${device.deviceId}',
+                  label: device.displayName,
+                ),
+            ],
+          ),
+        ));
+        items.add(MenuItem.separator());
+      }
     }
 
     items.add(MenuItem(key: 'show', label: 'DirectDrop\'u aç'));
@@ -270,6 +311,8 @@ class DesktopBackgroundService extends ChangeNotifier
 
   Future<void> _destroyTray() async {
     if (!_trayActive && !_initialized) return;
+    _menuRefreshDebounce?.cancel();
+    _menuRefreshDebounce = null;
     try {
       trayManager.removeListener(this);
       await trayManager.destroy();
@@ -372,6 +415,24 @@ class DesktopBackgroundService extends ChangeNotifier
       unawaited(
         ActiveSessionRegistry.instance.activeController?.rejectIncomingFile(id),
       );
+      return;
+    }
+    if (key == 'transfer_files') {
+      if (onTransferFilesToActivePeer != null) {
+        unawaited(onTransferFilesToActivePeer!());
+      }
+      return;
+    }
+    if (key == 'transfer_photos') {
+      if (onTransferPhotosToActivePeer != null) {
+        unawaited(onTransferPhotosToActivePeer!());
+      }
+      return;
+    }
+    if (key == 'disconnect_active') {
+      if (onDisconnectActivePeer != null) {
+        unawaited(onDisconnectActivePeer!());
+      }
       return;
     }
     if (key.startsWith('connect:')) {

@@ -225,9 +225,14 @@ class TransferSessionController extends ChangeNotifier {
     final items = _fileTransfer?.items ?? const [];
     final transferActive = ScreenWakeService.hasActiveTransferWork(items);
     unawaited(ScreenWakeService.instance.setTransferActive(transferActive));
+    // Mobil keep-alive (Android foreground service / iOS background task) yalnızca
+    // gerçek transfer işi (aktif/duraklatılmış/sıradaki) varken tutulur. Boşta
+    // bağlı bir oturum pil tüketmemeli; yeni istek FCM ile uyandırır.
     final roomActive = _session != null && !_disposed;
     unawaited(
-      MobileTransferKeepAliveService.setSessionActive(roomActive && isPaired),
+      MobileTransferKeepAliveService.setSessionActive(
+        transferActive && roomActive && isPaired,
+      ),
     );
   }
 

@@ -137,7 +137,38 @@ class FileTransferService {
       )
       .toList();
 
-  void _emit() => _transfersController.add(List.unmodifiable(_items));
+  // İlerleme yayınlarını zaman bazlı throttle etmek için (her 64KB chunk yerine).
+  Timer? _progressEmitTimer;
+  DateTime _lastProgressEmit = DateTime.fromMillisecondsSinceEpoch(0);
+  static const _progressEmitInterval = Duration(milliseconds: 100);
+
+  void _emit() {
+    // Doğrudan (durum değişimi) yayını bekleyen throttle penceresini sıfırlar.
+    _progressEmitTimer?.cancel();
+    _progressEmitTimer = null;
+    _lastProgressEmit = DateTime.now();
+    _transfersController.add(List.unmodifiable(_items));
+  }
+
+  /// Yalnızca ilerleme (bytesTransferred) güncellemeleri için: yayını en fazla
+  /// ~10 Hz'e indirir. Pencere içinde gelen son güncelleme de bir trailing
+  /// timer ile garanti yayınlanır, böylece %100 anı kaybolmaz.
+  void _emitProgress() {
+    final now = DateTime.now();
+    final elapsed = now.difference(_lastProgressEmit);
+    if (elapsed >= _progressEmitInterval) {
+      _progressEmitTimer?.cancel();
+      _progressEmitTimer = null;
+      _lastProgressEmit = now;
+      _transfersController.add(List.unmodifiable(_items));
+    } else {
+      _progressEmitTimer ??= Timer(_progressEmitInterval - elapsed, () {
+        _progressEmitTimer = null;
+        _lastProgressEmit = DateTime.now();
+        _transfersController.add(List.unmodifiable(_items));
+      });
+    }
+  }
 
   Future<void> ensurePeerReady() async {
     for (var i = 0; i < 50; i++) {
@@ -831,7 +862,7 @@ class FileTransferService {
           offset += readSize;
           chunkIndex++;
           item.bytesTransferred = offset;
-          _emit();
+          _emitProgress();
         }
       } finally {
         await raf.close();
@@ -1127,7 +1158,7 @@ class FileTransferService {
 
     context.item.bytesTransferred =
         (offset + data.length).clamp(0, context.item.size);
-    _emit();
+    _emitProgress();
 
     await _sendControl({
       'type': 'chunk_ack',
@@ -1163,6 +1194,8 @@ class FileTransferService {
 
   Future<void> dispose() async {
     _disposed = true;
+    _progressEmitTimer?.cancel();
+    _progressEmitTimer = null;
     _streamQueue.clear();
     await _subscription.cancel();
     for (final completer in _pendingReady.values) {

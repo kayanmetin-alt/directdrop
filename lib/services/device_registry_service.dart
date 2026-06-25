@@ -47,7 +47,8 @@ class DeviceRegistryService {
       'lastSeen': DateTime.now().millisecondsSinceEpoch,
       'online': true,
       'ownerUid': ownerUid,
-      if (fcmToken != null) 'fcmToken': fcmToken,
+      // FCM token artık burada tutulmuyor; eski kayıtlardaki alanı temizle.
+      'fcmToken': null,
     };
     final snapshot = await ref.get();
     if (snapshot.exists) {
@@ -55,8 +56,22 @@ class DeviceRegistryService {
     } else {
       await ref.set(payload);
     }
+    if (fcmToken != null) {
+      await _writeDeviceToken(deviceId, fcmToken);
+    }
     await Future<void>.delayed(const Duration(milliseconds: 300));
     await _configureDisconnectHandlers(ref);
+  }
+
+  DatabaseReference get _deviceTokens => _database.ref('deviceTokens');
+
+  /// FCM token'ı yalnızca sahibinin okuyabildiği ayrı düğüme yazar.
+  Future<void> _writeDeviceToken(String deviceId, String token) async {
+    try {
+      await _deviceTokens.child(deviceId).set(token);
+    } catch (e) {
+      debugPrint('FCM token yazılamadı: $e');
+    }
   }
 
   Future<void> setOnline(bool online) async {
@@ -119,16 +134,29 @@ class DeviceRegistryService {
 
   Duration get _heartbeatInterval {
     if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
-      return const Duration(seconds: 12);
+      return const Duration(seconds: 30);
     }
-    return const Duration(seconds: 20);
+    return const Duration(seconds: 30);
   }
 
+  /// Heartbeat artık her tikte tam yeniden kayıt yapmaz; yalnızca lastSeen/online
+  /// alanlarını hafifçe günceller. onDisconnect kuralları sunucuda kalıcıdır,
+  /// her tikte yeniden kurmaya gerek yoktur. Hafif güncelleme başarısızsa
+  /// (ör. kayıt hiç yoksa) tek seferlik tam kayda düşer.
   Future<void> _heartbeatTick() async {
     try {
-      await registerCurrentDevice();
+      final deviceId = await DeviceIdentityService.instance.getDeviceId();
+      await _devices.child(deviceId).update({
+        'online': true,
+        'lastSeen': ServerValue.timestamp,
+      });
     } catch (e) {
-      debugPrint('Heartbeat başarısız: $e');
+      debugPrint('Heartbeat (hafif) başarısız, tam kayıt deneniyor: $e');
+      try {
+        await registerCurrentDevice();
+      } catch (e2) {
+        debugPrint('Heartbeat tam kayıt da başarısız: $e2');
+      }
     }
   }
 
@@ -185,8 +213,8 @@ class DeviceRegistryService {
 
   Future<void> updateFcmToken(String token) async {
     final deviceId = await DeviceIdentityService.instance.getDeviceId();
+    await _writeDeviceToken(deviceId, token);
     await _devices.child(deviceId).update({
-      'fcmToken': token,
       'lastSeen': ServerValue.timestamp,
     });
   }

@@ -25,6 +25,7 @@ class DeviceIdentityService extends ChangeNotifier {
     mOptions: MacOsOptions(
       accessibility: KeychainAccessibility.first_unlock_this_device,
     ),
+    aOptions: AndroidOptions(encryptedSharedPreferences: true),
   );
 
   static const maxDisplayNameLength = 32;
@@ -34,7 +35,14 @@ class DeviceIdentityService extends ChangeNotifier {
   bool _configured = false;
   bool _loaded = false;
 
-  bool get _usesSecureStorage => Platform.isIOS || Platform.isMacOS;
+  // Cihaz kimliği uzun ömürlü bir sırdır; desteklenen tüm platformlarda
+  // güvenli depoda (Keychain / Keystore / DPAPI) tutulur. Linux'ta libsecret
+  // her ortamda bulunmayabileceğinden düz prefs'e düşülür.
+  bool get _usesSecureStorage =>
+      Platform.isIOS ||
+      Platform.isMacOS ||
+      Platform.isAndroid ||
+      Platform.isWindows;
 
   bool get isLoaded => _loaded;
   bool get needsDisplayNameSetup => _loaded && !_configured;
@@ -43,19 +51,39 @@ class DeviceIdentityService extends ChangeNotifier {
     if (_cachedId != null) return _cachedId!;
 
     final prefs = await SharedPreferences.getInstance();
-    var id = prefs.getString(_deviceIdKey);
 
-    if ((id == null || id.isEmpty) && _usesSecureStorage) {
-      id = await _secureStorage.read(key: _deviceIdKey);
+    String? id;
+    if (_usesSecureStorage) {
+      try {
+        id = await _secureStorage.read(key: _deviceIdKey);
+      } catch (e) {
+        debugPrint('Cihaz kimliği güvenli depodan okunamadı: $e');
+      }
     }
-
+    // Geçiş: eski sürümler kimliği düz prefs'te tutuyordu.
+    if (id == null || id.isEmpty) {
+      id = prefs.getString(_deviceIdKey);
+    }
     if (id == null || id.isEmpty) {
       id = _uuid.v4();
     }
 
-    await prefs.setString(_deviceIdKey, id);
     if (_usesSecureStorage) {
-      await _secureStorage.write(key: _deviceIdKey, value: id);
+      var securedOk = false;
+      try {
+        await _secureStorage.write(key: _deviceIdKey, value: id);
+        securedOk = true;
+      } catch (e) {
+        debugPrint('Cihaz kimliği güvenli depoya yazılamadı: $e');
+      }
+      if (securedOk) {
+        // Güvenli platformlarda kimliği düz metinde bırakma.
+        await prefs.remove(_deviceIdKey);
+      } else {
+        await prefs.setString(_deviceIdKey, id);
+      }
+    } else {
+      await prefs.setString(_deviceIdKey, id);
     }
 
     _cachedId = id;

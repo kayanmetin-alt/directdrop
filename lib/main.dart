@@ -26,6 +26,9 @@ import 'services/notification_service.dart';
 import 'services/paired_devices_service.dart';
 import 'services/session_cleanup_service.dart';
 import 'services/active_session_registry.dart';
+import 'services/app_check_service.dart';
+import 'services/send_file_picker_service.dart';
+import 'utils/session_exit_helper.dart';
 import 'services/paired_auto_connect_service.dart';
 import 'services/persistent_invite_code_service.dart';
 import 'services/recent_connection_service.dart';
@@ -70,6 +73,8 @@ Future<void> main() async {
     } catch (e) {
       debugPrint('Firebase persistence kapatılamadı: $e');
     }
+    // App Check jetonlarını üretmeye başla (zorunluluk Console'dan açılır).
+    unawaited(AppCheckService.activate());
     if (Platform.isIOS || Platform.isAndroid) {
       FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
     }
@@ -511,6 +516,67 @@ void _wireAutoReconnect() {
     DesktopBackgroundService.instance.onApproveReconnect = (request) {
       unawaited(_handleOverlayReconnectApprove(request));
     };
+    // Aktif bağlantı alt menüsü: menü çubuğundan dosya gönder / bağlantıyı kes.
+    DesktopBackgroundService.instance.onTransferFilesToActivePeer = () async {
+      await _transferFilesToActivePeerFromTray(fromPhotos: false);
+    };
+    DesktopBackgroundService.instance.onTransferPhotosToActivePeer = () async {
+      await _transferFilesToActivePeerFromTray(fromPhotos: true);
+    };
+    DesktopBackgroundService.instance.onDisconnectActivePeer = () async {
+      await _disconnectActivePeerFromTray();
+    };
+  }
+}
+
+/// Menü çubuğundaki aktif cihaz alt menüsünden dosya transferi: kaynağa göre
+/// (Dosyalar / Fotoğraflar) seçici açar, gönderir ve giden transferi sağ panelde
+/// gösterir (pencere gizliyken).
+Future<void> _transferFilesToActivePeerFromTray({
+  required bool fromPhotos,
+}) async {
+  final controller = ActiveSessionRegistry.instance.activeController;
+  if (controller == null || controller.isDisposed || !controller.isConnected) {
+    return;
+  }
+
+  List<String>? paths;
+  try {
+    // Native seçiciler ana pencere gizliyken de açılır, context gerekmez.
+    paths = fromPhotos
+        ? await SendFilePickerService.pickFromPhotosLibrary()
+        : await SendFilePickerService.pickFromDeviceStorage();
+  } catch (e, stack) {
+    debugPrint('Dosya/fotoğraf seçilemedi: $e\n$stack');
+    return;
+  }
+  if (paths == null || paths.isEmpty) return;
+
+  final overlay = DesktopOverlayService.instance;
+  final peerName = controller.peerDisplayName ?? 'Cihaz';
+  await overlay.beginOutgoingFilesPanel(peerName: peerName, controller: controller);
+
+  try {
+    await controller.sendFilePaths(paths);
+  } catch (e, stack) {
+    debugPrint('Menü çubuğundan dosya gönderilemedi: $e\n$stack');
+    await overlay.showDisconnectedNotice(peerName, userFacingMessage(e));
+  }
+}
+
+/// Menü çubuğundaki aktif cihaz alt menüsünden "Bağlantıyı kes": kullanıcı
+/// tarafından başlatılan kopuş — MacBook doğrudan ana sayfaya döner ("karşı
+/// taraf kapattı" akışı tetiklenmez).
+Future<void> _disconnectActivePeerFromTray() async {
+  final controller = ActiveSessionRegistry.instance.activeController;
+  // Panel ve overlay oturumunu kapat ki kopma bildirimi (disconnect notice)
+  // tetiklenmesin.
+  await DesktopOverlayService.instance.hideOverlayToTray();
+  if (controller != null) {
+    await SessionExitHelper.leaveAndGoHome(
+      controller: controller,
+      userInitiatedDisconnect: true,
+    );
   }
 }
 

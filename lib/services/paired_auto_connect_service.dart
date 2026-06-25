@@ -22,13 +22,17 @@ class PairedAutoConnectService extends ChangeNotifier {
   static final PairedAutoConnectService instance = PairedAutoConnectService._();
 
   static const _connectCooldown = Duration(seconds: 15);
-  static const _syncInterval = Duration(seconds: 20);
-  static const _desktopSyncInterval = Duration(seconds: 8);
+  // Periyodik senkron yalnızca bir yedek; gerçek tetik olay tabanlı davet
+  // dinleyicisidir. Bu yüzden idle CPU/ağ maliyetini düşürmek için aralık
+  // bilinçli olarak uzun tutulur (eskiden masaüstü 8s idi).
+  static const _syncInterval = Duration(seconds: 30);
+  static const _desktopSyncInterval = Duration(seconds: 30);
   static const _pendingSessionTimeout = Duration(seconds: 95);
   static const _inviteNudgeInterval = Duration(seconds: 12);
 
   final DeviceRegistryService _registry = DeviceRegistryService();
   final Map<String, TransferSessionController> _sessionsByPeerId = {};
+  final Map<String, VoidCallback> _sessionListeners = {};
   final Map<String, DateTime> _lastConnectAttempt = {};
   final Set<String> _connectingPeers = {};
   final Set<String> _processedInviteKeys = {};
@@ -320,21 +324,17 @@ class PairedAutoConnectService extends ChangeNotifier {
         _myDeviceId ?? await DeviceIdentityService.instance.getDeviceId();
 
     if (!_isKnownIncomingPeerFromId(fromId)) {
-      final fromDeviceName = value['fromDeviceName'] as String? ?? 'Cihaz';
-      final byName =
-          PairedDevicesService.instance.findByDisplayName(fromDeviceName);
-      if (byName == null) {
-        await _registry.removePairInvite(
-          targetDeviceId: myId,
-          fromDeviceId: fromId,
-        );
-        return;
-      }
-      await PairedDevicesService.instance.reconcileDeviceId(
-        oldDeviceId: byName.deviceId,
-        newDeviceId: fromId,
+      // Güvenlik: otomatik bağlantı YALNIZCA daha önce eşleştirilmiş bir
+      // deviceId için kurulur. Görünen ad istemciden gelir ve taklit
+      // edilebilir; bu yüzden ada göre eşleştirme/reconcile yapılmaz (aksi
+      // halde saldırgan tanıdık bir adla eşleşmeyi kaçırıp sessizce
+      // bağlanabilirdi). Tanınmayan davet sessizce silinir; kullanıcı
+      // gerekirse QR ile yeniden eşleştirir.
+      await _registry.removePairInvite(
+        targetDeviceId: myId,
+        fromDeviceId: fromId,
       );
-      _migrateSessionKey(byName.deviceId, fromId);
+      return;
     }
 
     if (isConnectedTo(fromId)) {
@@ -511,6 +511,12 @@ class PairedAutoConnectService extends ChangeNotifier {
     _sessionStartedAt.remove(peerId);
     _lastInviteNudge.remove(peerId);
     _connectingPeers.remove(peerId);
+    // Eklenen dinleyiciyi kaldırarak sızıntıyı ve oturum sonrası stray
+    // notifyListeners çağrılarını önle.
+    final listener = _sessionListeners.remove(peerId);
+    if (listener != null && session != null && !session.isDisposed) {
+      session.removeListener(listener);
+    }
     if (session == null) return;
 
     if (notifyPeer && !session.isDisposed && session.session != null) {
@@ -585,7 +591,13 @@ class PairedAutoConnectService extends ChangeNotifier {
     String peerDeviceId,
     TransferSessionController controller,
   ) {
-    controller.addListener(() {
+    // Aynı peer için kalmış bir dinleyici varsa önce kaldır.
+    final previous = _sessionListeners.remove(peerDeviceId);
+    if (previous != null && !controller.isDisposed) {
+      controller.removeListener(previous);
+    }
+
+    void listener() {
       if (controller.isConnected) {
         _processedInviteKeys.removeWhere((key) => key.startsWith('$peerDeviceId:'));
       }
@@ -611,7 +623,10 @@ class PairedAutoConnectService extends ChangeNotifier {
       }
 
       notifyListeners();
-    });
+    }
+
+    _sessionListeners[peerDeviceId] = listener;
+    controller.addListener(listener);
   }
 
   bool _isKnownPeer(String deviceId) {
@@ -619,32 +634,6 @@ class PairedAutoConnectService extends ChangeNotifier {
   }
 
   bool _isKnownIncomingPeerFromId(String deviceId) => _isKnownPeer(deviceId);
-
-  void _migrateSessionKey(String oldId, String newId) {
-    if (oldId == newId) return;
-
-    final session = _sessionsByPeerId.remove(oldId);
-    if (session != null) {
-      _sessionsByPeerId[newId] = session;
-    }
-
-    final started = _sessionStartedAt.remove(oldId);
-    if (started != null) {
-      _sessionStartedAt[newId] = started;
-    }
-
-    final nudge = _lastInviteNudge.remove(oldId);
-    if (nudge != null) {
-      _lastInviteNudge[newId] = nudge;
-    }
-
-    if (_connectingPeers.remove(oldId)) {
-      _connectingPeers.add(newId);
-    }
-
-    _lastConnectAttempt.remove(oldId);
-    notifyListeners();
-  }
 
   Future<TransferSessionController?> waitForSession(
     String peerDeviceId, {
