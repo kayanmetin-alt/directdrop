@@ -5,7 +5,7 @@ import 'package:flutter/material.dart';
 
 import '../services/screen_wake_service.dart';
 
-/// Oda ekranı sağ üst ayar menüsü (zamanla genişletilebilir).
+/// Transfer ekranı ayar menüsü.
 class TransferRoomSettingsSheet extends StatefulWidget {
   const TransferRoomSettingsSheet({super.key});
 
@@ -56,7 +56,7 @@ class _TransferRoomSettingsSheetState extends State<TransferRoomSettingsSheet> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Text(
-              'Oda ayarları',
+              'Transfer ayarları',
               style: theme.textTheme.titleMedium,
             ),
             const SizedBox(height: 8),
@@ -69,11 +69,11 @@ class _TransferRoomSettingsSheetState extends State<TransferRoomSettingsSheet> {
                       : Icons.brightness_7_outlined,
                   color: theme.colorScheme.primary,
                 ),
-                title: const Text('Ekranı uyanık tut'),
+                title: const Text('Aktarım sırasında ekranı uyanık tut'),
                 subtitle: Text(
                   _screenWake.keepAwakeEnabled
-                      ? 'Bu bağlantıda ekran kapanmaz.'
-                      : 'Bu bağlantıda ekran normal şekilde kapanır.',
+                      ? 'Dosya gönderilirken veya alınırken ekran kapanmaz.'
+                      : 'Aktarım sırasında da ekran normal şekilde kapanır.',
                   style: theme.textTheme.bodySmall?.copyWith(
                     color: theme.colorScheme.onSurfaceVariant,
                   ),
@@ -87,7 +87,7 @@ class _TransferRoomSettingsSheetState extends State<TransferRoomSettingsSheet> {
               Padding(
                 padding: const EdgeInsets.symmetric(vertical: 12),
                 child: Text(
-                  'Bu platform için oda ayarı bulunmuyor.',
+                  'Bu platform için transfer ayarı bulunmuyor.',
                   style: theme.textTheme.bodyMedium?.copyWith(
                     color: theme.colorScheme.onSurfaceVariant,
                   ),
@@ -121,7 +121,7 @@ class TransferRoomSettingsIcon extends StatelessWidget {
         final active = ScreenWakeService.instance.keepAwakeEnabled;
         return IconButton(
           onPressed: onPressed,
-          tooltip: 'Oda ayarları',
+          tooltip: 'Transfer ayarları',
           icon: Icon(
             active ? Icons.settings_brightness : Icons.settings_outlined,
           ),

@@ -3,10 +3,21 @@ import Cocoa
 /// Son pencere boyutu ve konumunu UserDefaults'ta saklar.
 enum WindowFrameStorage {
   private static let prefix = "com.directdrop.app.window"
-  private static let minWidth: CGFloat = 480
-  private static let minHeight: CGFloat = 360
+  private static let minWidth: CGFloat = 400
+  private static let minHeight: CGFloat = 720
+  private static let maxWidth: CGFloat = 520
+  private static let maxHeight: CGFloat = 920
+  private static let defaultWidth: CGFloat = 440
+  private static let defaultHeight: CGFloat = 780
+
+  static func applyConstraints(to window: NSWindow) {
+    window.minSize = NSSize(width: minWidth, height: minHeight)
+    window.maxSize = NSSize(width: maxWidth, height: maxHeight)
+    window.contentAspectRatio = NSSize(width: defaultWidth, height: defaultHeight)
+  }
 
   static func restore(to window: NSWindow) {
+    applyConstraints(to: window)
     guard let frame = loadFrame() else { return }
     window.setFrame(frame, display: false)
   }
@@ -14,7 +25,9 @@ enum WindowFrameStorage {
   static func save(from window: NSWindow) {
     guard window.isVisible, !window.isMiniaturized else { return }
 
-    let frame = window.frame
+    var frame = window.frame
+    frame.size.width = min(max(frame.size.width, minWidth), maxWidth)
+    frame.size.height = min(max(frame.size.height, minHeight), maxHeight)
     guard frame.width >= minWidth, frame.height >= minHeight else { return }
 
     let defaults = UserDefaults.standard
@@ -46,11 +59,14 @@ enum WindowFrameStorage {
     let defaults = UserDefaults.standard
     guard defaults.object(forKey: "\(prefix).width") != nil else { return nil }
 
-    let frame = NSRect(
+    var frame = NSRect(
       x: defaults.double(forKey: "\(prefix).x"),
       y: defaults.double(forKey: "\(prefix).y"),
       width: defaults.double(forKey: "\(prefix).width"),
       height: defaults.double(forKey: "\(prefix).height"))
+
+    frame.size.width = min(max(frame.size.width, minWidth), maxWidth)
+    frame.size.height = min(max(frame.size.height, minHeight), maxHeight)
 
     guard frame.width >= minWidth, frame.height >= minHeight else { return nil }
     guard isVisibleOnAnyScreen(frame) else { return nil }

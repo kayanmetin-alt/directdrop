@@ -12,6 +12,8 @@ class MainFlutterWindow: NSWindow {
 
     RegisterGeneratedPlugins(registry: flutterViewController)
 
+    DesktopAuxiliaryPanels.shared.register(messenger: flutterViewController.engine.binaryMessenger)
+
     removeEmbeddedDropTargets(from: flutterViewController.view)
 
     let windowChannel = FlutterMethodChannel(

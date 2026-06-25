@@ -18,11 +18,16 @@ class IncomingReconnectScreen extends StatefulWidget {
     required this.request,
     this.peer,
     this.autoApprove = false,
+    this.existingController,
   });
 
   final ReconnectRequest request;
   final PairedDevice? peer;
   final bool autoApprove;
+
+  /// Onay başka bir yerde (ör. masaüstü yardımcı paneli) yapıldıysa hazır
+  /// kontrolcüyü gösterir; yeniden onaylama yapılmaz.
+  final TransferSessionController? existingController;
 
   @override
   State<IncomingReconnectScreen> createState() =>
@@ -34,13 +39,19 @@ class _IncomingReconnectScreenState extends State<IncomingReconnectScreen> {
   String? _error;
   bool _busy = false;
 
+  /// Kontrolcü dışarıda yaratıldıysa bu ekran onu yönetmez (kapanışta bırakmaz).
+  bool _ownsController = true;
+
   String get _displayName =>
       widget.peer?.displayName ?? widget.request.fromDeviceName;
 
   @override
   void initState() {
     super.initState();
-    if (widget.autoApprove) {
+    if (widget.existingController != null) {
+      _controller = widget.existingController;
+      _ownsController = false;
+    } else if (widget.autoApprove) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         unawaited(_approve());
       });
@@ -49,9 +60,11 @@ class _IncomingReconnectScreenState extends State<IncomingReconnectScreen> {
 
   @override
   void dispose() {
-    final controller = _controller;
-    if (controller != null) {
-      ActiveSessionRegistry.instance.unregister(controller);
+    if (_ownsController) {
+      final controller = _controller;
+      if (controller != null) {
+        ActiveSessionRegistry.instance.unregister(controller);
+      }
     }
     super.dispose();
   }

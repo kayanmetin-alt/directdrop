@@ -3,10 +3,11 @@ import 'dart:io';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 import '../models/transfer_file.dart';
 import '../providers/transfer_session_controller.dart';
+import '../services/active_session_registry.dart';
+import '../services/desktop_background_service.dart';
 import '../services/send_file_picker_service.dart';
 import '../services/webrtc_service.dart';
 import '../services/transfer_history_service.dart';
@@ -47,6 +48,9 @@ class _TransferScreenState extends State<TransferScreen>
   String? _error;
   bool _sendButtonReady = false;
   bool _handledPeerLeft = false;
+  bool _historyExpanded = false;
+  bool _historySynced = false;
+  int _knownHistoryCount = 0;
   final FocusNode _sendButtonFocus = FocusNode(skipTraversal: true);
   final _historyService = TransferHistoryService.instance;
 
@@ -63,9 +67,10 @@ class _TransferScreenState extends State<TransferScreen>
         platform: widget.peerPlatform,
       );
     }
-    _historyService.load();
     _historyService.addListener(_onHistoryChanged);
     _controller.addListener(_onControllerChanged);
+    unawaited(_controller.ensurePeerDeviceResolved());
+    unawaited(_initHistoryBaseline());
     WidgetsBinding.instance.addPostFrameCallback((_) {
       Future<void>.delayed(const Duration(milliseconds: 600), () {
         if (mounted) setState(() => _sendButtonReady = true);
@@ -73,12 +78,43 @@ class _TransferScreenState extends State<TransferScreen>
     });
   }
 
+  Future<void> _initHistoryBaseline() async {
+    await _historyService.load();
+    await _controller.ensurePeerDeviceResolved();
+    if (!mounted) return;
+    setState(() {
+      _knownHistoryCount = _historyEntries().length;
+      _historySynced = true;
+    });
+  }
+
   void _onHistoryChanged() {
-    if (mounted) setState(() {});
+    if (!mounted) return;
+    final count = _historyEntries().length;
+    setState(() {
+      // Yeni bir kayıt eklendiğinde (transfer tamamlanınca) listeyi otomatik aç.
+      if (_historySynced && count > _knownHistoryCount) {
+        _historyExpanded = true;
+      }
+      _knownHistoryCount = count;
+    });
+  }
+
+  String _historySubtitle(String peerLabel, int count) {
+    if (count == 0) {
+      return '$peerLabel ile transfer geçmişi yok';
+    }
+    return _historyExpanded
+        ? '$count kayıt — gizlemek için dokunun'
+        : '$count kayıt — göstermek için dokunun';
   }
 
   void _onControllerChanged() {
     if (!mounted || _handledPeerLeft || _controller.userInitiatedLeave) return;
+    if (_controller.supersededByReconnect) return;
+
+    final active = ActiveSessionRegistry.instance.activeController;
+    if (active != null && !identical(active, _controller)) return;
 
     final peerLabel =
         widget.peerDisplayName ?? _controller.peerDisplayName ?? 'Karşı cihaz';
@@ -100,6 +136,7 @@ class _TransferScreenState extends State<TransferScreen>
     if (_controller.hadSuccessfulConnection &&
         !_controller.isConnected &&
         !_controller.isReconnecting &&
+        !_controller.isBackgrounded &&
         _controller.connectionState == WebRtcConnectionState.failed) {
       _handledPeerLeft = true;
       unawaited(
@@ -140,11 +177,8 @@ class _TransferScreenState extends State<TransferScreen>
   }
 
   Future<void> _activateAppWindow() async {
-    if (Platform.isMacOS) {
-      const channel = MethodChannel('com.directdrop.app/window');
-      try {
-        await channel.invokeMethod<void>('activate');
-      } catch (_) {}
+    if (Platform.isMacOS || Platform.isWindows) {
+      await DesktopBackgroundService.instance.showMainWindow();
     }
   }
 
@@ -229,16 +263,15 @@ class _TransferScreenState extends State<TransferScreen>
 
   Future<void> _confirmClearHistory() async {
     final peerId = widget.peerDeviceId ?? _controller.peerDeviceId;
-    final clearPeer = peerId != null;
+    if (peerId == null) return;
+
+    final peerLabel =
+        widget.peerDisplayName ?? _controller.peerDisplayName ?? 'Bu cihaz';
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Geçmişi temizle'),
-        content: Text(
-          clearPeer
-              ? 'Bu cihazla olan transfer geçmişi silinsin mi?'
-              : 'Tüm transfer geçmişi silinsin mi?',
-        ),
+        content: Text('$peerLabel ile olan transfer geçmişi silinsin mi?'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
@@ -253,12 +286,7 @@ class _TransferScreenState extends State<TransferScreen>
     );
 
     if (confirmed != true) return;
-
-    if (clearPeer) {
-      await _historyService.clearForPeer(peerId);
-    } else {
-      await _historyService.clearAll();
-    }
+    await _historyService.clearForPeer(peerId);
   }
 
   String _connectionLabel(WebRtcConnectionState state) {
@@ -280,10 +308,8 @@ class _TransferScreenState extends State<TransferScreen>
 
   List<dynamic> _historyEntries() {
     final peerId = widget.peerDeviceId ?? _controller.peerDeviceId;
-    final records = peerId != null
-        ? _historyService.recordsForPeer(peerId)
-        : _historyService.records;
-    return records;
+    if (peerId == null) return const [];
+    return _historyService.recordsForPeer(peerId);
   }
 
   List<TransferFileItem> _activeTransfers(List<TransferFileItem> items) {
@@ -365,6 +391,188 @@ class _TransferScreenState extends State<TransferScreen>
     );
   }
 
+  Widget _buildTopSection({
+    required BuildContext context,
+    required dynamic session,
+    required List<TransferFileItem> awaitingIncoming,
+    required List<TransferFileItem> activeTransfers,
+    required bool showActiveSection,
+    required int historyCount,
+    required String peerLabel,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Card(
+            child: ListTile(
+              leading: _controller.isReconnecting
+                  ? const SizedBox(
+                      width: 24,
+                      height: 24,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : Icon(
+                      _controller.isConnected ? Icons.link : Icons.link_off,
+                    ),
+              title: Text(_connectionLabel(_controller.connectionState)),
+              subtitle: Text('Oda ${session.roomCode}'),
+            ),
+          ),
+          if (!_controller.isConnected &&
+              _controller.isPaired &&
+              !_controller.userInitiatedLeave &&
+              !_controller.peerHasLeft) ...[
+            const SizedBox(height: 8),
+            Card(
+              color: Theme.of(context).colorScheme.secondaryContainer,
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        _controller.isReconnecting
+                            ? 'Bağlantı geri yükleniyor…'
+                            : 'Bağlantı kesildi. Yeniden bağlanabilirsiniz.',
+                      ),
+                    ),
+                    if (!_controller.isReconnecting)
+                      TextButton(
+                        onPressed: _controller.reconnectIfNeeded,
+                        child: const Text('Yeniden bağlan'),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+          if (showActiveSection) ...[
+            const SizedBox(height: 16),
+            Text(
+              'Aktif transferler',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 8),
+            if (awaitingIncoming.isNotEmpty)
+              IncomingTransferApprovalPanel(
+                controller: _controller,
+                items: awaitingIncoming,
+              ),
+            ...activeTransfers.map(_buildActiveTransferItem),
+          ],
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            focusNode: _sendButtonFocus,
+            autofocus: false,
+            onPressed:
+                _sendButtonReady && _controller.isConnected && !_sending
+                    ? _pickAndSend
+                    : null,
+            icon: _sending
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.attach_file),
+            label: const Text('Dosya Gönder'),
+          ),
+          if (DesktopFileDropOverlay.isSupported && _controller.isConnected) ...[
+            const SizedBox(height: 8),
+            Text(
+              'veya dosyaları bu pencereye sürükleyip bırakın',
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+            ),
+          ],
+          if (_error != null) ...[
+            const SizedBox(height: 8),
+            Text(
+              _error!,
+              style: TextStyle(color: Theme.of(context).colorScheme.error),
+            ),
+          ],
+          const SizedBox(height: 12),
+          const DownloadLocationSettings(collapsible: true),
+          const SizedBox(height: 16),
+          InkWell(
+            borderRadius: BorderRadius.circular(8),
+            onTap: () => setState(() => _historyExpanded = !_historyExpanded),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Transfer geçmişi',
+                          style: Theme.of(context).textTheme.titleMedium,
+                        ),
+                        Text(
+                          _historySubtitle(peerLabel, historyCount),
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (historyCount > 0 && _historyExpanded)
+                    TextButton(
+                      onPressed: _confirmClearHistory,
+                      child: const Text('Temizle'),
+                    ),
+                  Icon(
+                    _historyExpanded ? Icons.expand_less : Icons.expand_more,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildHistorySection({
+    required BuildContext context,
+    required List<dynamic> history,
+  }) {
+    if (!_historyExpanded) return const SizedBox.shrink();
+
+    if (history.isEmpty) {
+      return Expanded(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+          child: Center(
+            child: Text(
+              'Bu bağlantıda henüz kayıtlı transfer yok.\n'
+              'Gönderilen ve alınan dosyalar burada listelenir.',
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.bodyMedium,
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Expanded(
+      child: ListView.builder(
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+        itemCount: history.length,
+        itemBuilder: (context, index) {
+          return TransferHistoryTile(record: history[index]);
+        },
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
@@ -439,151 +647,37 @@ class _TransferScreenState extends State<TransferScreen>
             onFilesDropped: _sendPaths,
             child: DesktopCenteredLayout(
               maxWidth: 820,
-              child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                Card(
-                  child: ListTile(
-                    leading: _controller.isReconnecting
-                        ? const SizedBox(
-                            width: 24,
-                            height: 24,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : Icon(
-                            _controller.isConnected
-                                ? Icons.link
-                                : Icons.link_off,
-                          ),
-                    title: Text(_connectionLabel(_controller.connectionState)),
-                    subtitle: Text('Oda ${session.roomCode}'),
-                  ),
-                ),
-                if (!_controller.isConnected &&
-                    _controller.isPaired &&
-                    !_controller.userInitiatedLeave &&
-                    !_controller.peerHasLeft) ...[
-                  const SizedBox(height: 8),
-                  Card(
-                    color: Theme.of(context).colorScheme.secondaryContainer,
-                    child: Padding(
-                      padding: const EdgeInsets.all(12),
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              _controller.isReconnecting
-                                  ? 'Bağlantı geri yükleniyor…'
-                                  : 'Bağlantı kesildi. Yeniden bağlanabilirsiniz.',
-                            ),
-                          ),
-                          if (!_controller.isReconnecting)
-                            TextButton(
-                              onPressed: _controller.reconnectIfNeeded,
-                              child: const Text('Yeniden bağlan'),
-                            ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ],
-                if (showActiveSection) ...[
-                  const SizedBox(height: 16),
-                  Text(
-                    'Aktif transferler',
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                  const SizedBox(height: 8),
-                  if (awaitingIncoming.isNotEmpty)
-                    IncomingTransferApprovalPanel(
-                      controller: _controller,
-                      items: awaitingIncoming,
-                    ),
-                  ...activeTransfers.map(_buildActiveTransferItem),
-                ],
-                const SizedBox(height: 12),
-                OutlinedButton.icon(
-                  focusNode: _sendButtonFocus,
-                  autofocus: false,
-                  onPressed: _sendButtonReady &&
-                          _controller.isConnected &&
-                          !_sending
-                      ? _pickAndSend
-                      : null,
-                  icon: _sending
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.attach_file),
-                  label: const Text('Dosya Gönder'),
-                ),
-                if (DesktopFileDropOverlay.isSupported &&
-                    _controller.isConnected) ...[
-                  const SizedBox(height: 8),
-                  Text(
-                    'veya dosyaları bu pencereye sürükleyip bırakın',
-                    textAlign: TextAlign.center,
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: Theme.of(context)
-                              .colorScheme
-                              .onSurfaceVariant,
+              child: _historyExpanded
+                  ? Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        _buildTopSection(
+                          context: context,
+                          session: session,
+                          awaitingIncoming: awaitingIncoming,
+                          activeTransfers: activeTransfers,
+                          showActiveSection: showActiveSection,
+                          historyCount: history.length,
+                          peerLabel: peerLabel,
                         ),
-                  ),
-                ],
-                if (_error != null) ...[
-                  const SizedBox(height: 8),
-                  Text(
-                    _error!,
-                    style: TextStyle(
-                      color: Theme.of(context).colorScheme.error,
-                    ),
-                  ),
-                ],
-                const SizedBox(height: 12),
-                const DownloadLocationSettings(collapsible: true),
-                const SizedBox(height: 16),
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        'Transfer geçmişi',
-                        style: Theme.of(context).textTheme.titleMedium,
-                      ),
-                    ),
-                    if (history.isNotEmpty)
-                      TextButton(
-                        onPressed: _confirmClearHistory,
-                        child: const Text('Temizle'),
-                      ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                Expanded(
-                  child: history.isEmpty
-                      ? Center(
-                          child: Text(
-                            'Henüz kayıtlı transfer yok.\n'
-                            'Gönderilen ve alınan dosyalar burada kalıcı olarak listelenir.',
-                            textAlign: TextAlign.center,
-                            style: Theme.of(context).textTheme.bodyMedium,
-                          ),
-                        )
-                      : ListView.builder(
-                          itemCount: history.length,
-                          itemBuilder: (context, index) {
-                            final record = history[index];
-                            return TransferHistoryTile(record: record);
-                          },
+                        _buildHistorySection(
+                          context: context,
+                          history: history,
                         ),
-                ),
-              ],
+                      ],
+                    )
+                  : SingleChildScrollView(
+                      child: _buildTopSection(
+                        context: context,
+                        session: session,
+                        awaitingIncoming: awaitingIncoming,
+                        activeTransfers: activeTransfers,
+                        showActiveSection: showActiveSection,
+                        historyCount: history.length,
+                        peerLabel: peerLabel,
+                      ),
+                    ),
             ),
-          ),
-        ),
           ),
         ),
         );

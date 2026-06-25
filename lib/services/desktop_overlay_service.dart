@@ -1,0 +1,634 @@
+import 'dart:async';
+import 'dart:io';
+
+import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
+
+import '../models/desktop_banner_entry.dart';
+import '../models/reconnect_request.dart';
+import '../models/transfer_file.dart';
+import '../providers/transfer_session_controller.dart';
+import 'active_session_registry.dart';
+import 'desktop_background_service.dart';
+import 'desktop_window_service.dart';
+
+/// Dosya panelindeki satır durumu.
+enum _PanelFilePhase { pending, transferring, completed }
+
+class _PanelFileRow {
+  _PanelFileRow({
+    required this.id,
+    required this.name,
+    required this.phase,
+    this.progress = 0,
+    this.status = '',
+  });
+
+  final String id;
+  final String name;
+  _PanelFilePhase phase;
+  double progress;
+  String status;
+}
+
+/// Reconnect panelinin gösterdiği aşama.
+enum ReconnectPanelPhase { prompt, connecting, connected }
+
+class DesktopOverlayService extends ChangeNotifier {
+  DesktopOverlayService._();
+
+  static final DesktopOverlayService instance = DesktopOverlayService._();
+
+  static const _channel = MethodChannel('com.directdrop.app/overlay');
+
+  static bool get isSupported => Platform.isWindows || Platform.isMacOS;
+
+  static bool get _usesNativePanels => Platform.isMacOS;
+
+  final List<DesktopBannerEntry> banners = [];
+
+  ReconnectPanelPhase _reconnectPhase = ReconnectPanelPhase.prompt;
+  TransferSessionController? _reconnectController;
+  String _reconnectPeerName = 'Cihaz';
+
+  String? _filesPanelPeerName;
+  final Map<String, _PanelFileRow> _panelFiles = {};
+
+  Timer? _filesPanelAutoHideTimer;
+  Timer? _reconnectCloseTimer;
+  bool _actionHandlerRegistered = false;
+
+  /// Sağ panelden onaylanan oturum — ana pencere açılmadan devam eder.
+  bool _overlayOnlySession = false;
+  bool get isOverlayOnlySession => _overlayOnlySession;
+  TransferSessionController? _sessionController;
+  bool _overlaySessionWasConnected = false;
+
+  /// Aktif oturumdan gelen transfer id'leri (eski oturumları ayıklamak için).
+  final Set<String> _recentlyActiveIds = {};
+
+  /// Reddedilen dosyalar — banner yenilenirken tekrar eklenmesin.
+  final Set<String> _rejectedFileIds = {};
+
+  /// Onaylandı ama henüz awaitingApproval'dan düşmemiş dosyalar.
+  final Set<String> _approvedPendingIds = {};
+
+  DateTime? _lastProgressSync;
+  Timer? _progressSyncDebounce;
+
+  void Function(ReconnectRequest request)? onReconnectApproved;
+  void Function(ReconnectRequest request)? onReconnectRejected;
+  void Function(String fileId)? onFileApproved;
+  void Function(String fileId)? onFileRejected;
+  VoidCallback? onAcceptAllFiles;
+  VoidCallback? onRejectAllFiles;
+  VoidCallback? onOpenMainApp;
+
+  TransferSessionController? get _controller =>
+      ActiveSessionRegistry.instance.activeController;
+
+  /// macOS'ta yardımcı panel açık mı veya arka plan oturumu panel üzerinden yürüyor mu.
+  bool get isOverlayActive =>
+      banners.isNotEmpty || _panelFiles.isNotEmpty || _overlayOnlySession;
+
+  void enableOverlayOnlySession() {
+    _overlayOnlySession = true;
+  }
+
+  void disableOverlayOnlySession() {
+    _overlayOnlySession = false;
+    _overlaySessionWasConnected = false;
+    _detachOverlaySession();
+  }
+
+  /// Arka plandaki oturumdan dosya paneli güncellemelerini al.
+  void attachOverlaySession(TransferSessionController controller) {
+    if (!isSupported) return;
+    _detachOverlaySession();
+    _overlaySessionWasConnected = false;
+    _sessionController = controller;
+    controller.addListener(_onOverlaySessionChanged);
+    _onOverlaySessionChanged();
+  }
+
+  void _detachOverlaySession() {
+    _sessionController?.removeListener(_onOverlaySessionChanged);
+    _sessionController = null;
+  }
+
+  void _onOverlaySessionChanged() {
+    final controller = _sessionController;
+    if (controller == null) return;
+
+    if (controller.isConnected) {
+      _overlaySessionWasConnected = true;
+    }
+
+    final items = controller.fileTransfer?.items ?? const <TransferFileItem>[];
+    unawaited(onTransferItemsChanged(items));
+
+    if (controller.isDisposed ||
+        (_overlaySessionWasConnected && !controller.isConnected)) {
+      disableOverlayOnlySession();
+    }
+  }
+
+  /// macOS sağ köşe panelleri yalnızca ana pencere gizliyken kullanılır.
+  static Future<bool> shouldUseNativePanels() async {
+    if (!_usesNativePanels) return false;
+    return DesktopBackgroundService.instance.isMainWindowHidden();
+  }
+
+  /// Ana pencere görünürken köşe panellerini kapat (işlem uygulama içinden yapılır).
+  Future<void> suppressPanelsForVisibleMainWindow() async {
+    if (!isSupported) return;
+    _reconnectCloseTimer?.cancel();
+    banners.removeWhere(
+      (b) =>
+          b.kind == DesktopBannerKind.reconnect ||
+          b.kind == DesktopBannerKind.incomingFiles,
+    );
+    _reconnectPhase = ReconnectPanelPhase.prompt;
+    _panelFiles.clear();
+    _filesPanelAutoHideTimer?.cancel();
+    _recentlyActiveIds.clear();
+    notifyListeners();
+    await _syncPanels();
+  }
+
+  void registerActionHandler() {
+    if (!_usesNativePanels || _actionHandlerRegistered) return;
+    _actionHandlerRegistered = true;
+    _channel.setMethodCallHandler(_handleNativeAction);
+  }
+
+  Future<void> showReconnectBanner(ReconnectRequest request) async {
+    if (!isSupported) return;
+    if (!await shouldUseNativePanels()) return;
+
+    _reconnectCloseTimer?.cancel();
+    _reconnectPhase = ReconnectPanelPhase.prompt;
+    _reconnectPeerName = request.fromDeviceName;
+    _detachReconnectController();
+
+    final id = 'reconnect_${request.fromDeviceId}_${request.clientCreatedAt}';
+    banners.removeWhere((b) => b.kind == DesktopBannerKind.reconnect);
+    banners.insert(
+      0,
+      DesktopBannerEntry(
+        id: id,
+        kind: DesktopBannerKind.reconnect,
+        title: '${request.fromDeviceName} bağlanmak istiyor',
+        subtitle: 'Onaylayın veya reddedin.',
+        reconnect: request,
+        peerName: request.fromDeviceName,
+      ),
+    );
+
+    await _syncPanels();
+    notifyListeners();
+  }
+
+  /// Onaylandı; bağlantı kuruluyor durumuna geç.
+  Future<void> markReconnectConnecting() async {
+    if (!isSupported) return;
+    _reconnectCloseTimer?.cancel();
+    _reconnectPhase = ReconnectPanelPhase.connecting;
+    notifyListeners();
+    await _syncPanels();
+  }
+
+  /// Bağlantı kontrolcüsünü panele bağla; bağlanınca "Bağlandı" + otomatik kapan.
+  void attachReconnectController(TransferSessionController controller) {
+    if (!isSupported) return;
+    _detachReconnectController();
+    _reconnectController = controller;
+    _reconnectPeerName = controller.peerDisplayName ?? _reconnectPeerName;
+    controller.addListener(_onReconnectControllerChanged);
+    _onReconnectControllerChanged();
+  }
+
+  void _detachReconnectController() {
+    _reconnectController?.removeListener(_onReconnectControllerChanged);
+    _reconnectController = null;
+  }
+
+  void _onReconnectControllerChanged() {
+    final controller = _reconnectController;
+    if (controller == null) return;
+    if (controller.isConnected &&
+        _reconnectPhase != ReconnectPanelPhase.connected) {
+      _reconnectPhase = ReconnectPanelPhase.connected;
+      _reconnectPeerName = controller.peerDisplayName ?? _reconnectPeerName;
+      notifyListeners();
+      unawaited(_syncPanels());
+      _reconnectCloseTimer?.cancel();
+      _reconnectCloseTimer = Timer(const Duration(milliseconds: 1800), () {
+        _detachReconnectController();
+        unawaited(_dismissReconnectBanner());
+      });
+    }
+  }
+
+  Future<void> _dismissReconnectBanner() async {
+    banners.removeWhere((b) => b.kind == DesktopBannerKind.reconnect);
+    _reconnectPhase = ReconnectPanelPhase.prompt;
+    notifyListeners();
+    await _syncPanels();
+  }
+
+  Future<void> showIncomingFilesBanner({
+    required String peerName,
+    required List<TransferFileItem> files,
+  }) async {
+    if (!isSupported) return;
+    if (!await shouldUseNativePanels()) return;
+
+    _filesPanelPeerName = peerName;
+    for (final f in files) {
+      if (_rejectedFileIds.contains(f.id)) continue;
+      if (_approvedPendingIds.contains(f.id)) continue;
+      final existing = _panelFiles[f.id];
+      if (existing != null &&
+          existing.phase != _PanelFilePhase.pending) {
+        continue;
+      }
+      _panelFiles[f.id] = _PanelFileRow(
+        id: f.id,
+        name: f.name,
+        phase: _PanelFilePhase.pending,
+      );
+    }
+
+    _filesPanelAutoHideTimer?.cancel();
+    banners.removeWhere((b) => b.kind == DesktopBannerKind.incomingFiles);
+    notifyListeners();
+    await _syncPanels();
+  }
+
+  /// Onay/ret: satır aynı panelde kalır; onayda butonlar kalkıp ilerleme çubuğu gelir.
+  Future<void> markFileResolved(String fileId, {required bool approved}) async {
+    if (!isSupported) return;
+
+    if (approved) {
+      _approvedPendingIds.add(fileId);
+      final name = _panelFiles[fileId]?.name ?? 'Dosya';
+      _panelFiles[fileId] = _PanelFileRow(
+        id: fileId,
+        name: name,
+        phase: _PanelFilePhase.transferring,
+        progress: 0,
+        status: 'Başlatılıyor',
+      );
+    } else {
+      _rejectedFileIds.add(fileId);
+      _panelFiles.remove(fileId);
+    }
+
+    _filesPanelAutoHideTimer?.cancel();
+    notifyListeners();
+    await _syncPanels();
+  }
+
+  Future<void> markAllFilesApproved() async {
+    if (!isSupported) return;
+
+    for (final entry in _panelFiles.entries.toList()) {
+      if (entry.value.phase != _PanelFilePhase.pending) continue;
+      _approvedPendingIds.add(entry.key);
+      _panelFiles[entry.key] = _PanelFileRow(
+        id: entry.value.id,
+        name: entry.value.name,
+        phase: _PanelFilePhase.transferring,
+        progress: 0,
+        status: 'Başlatılıyor',
+      );
+    }
+
+    _filesPanelAutoHideTimer?.cancel();
+    notifyListeners();
+    await _syncPanels();
+  }
+
+  Future<void> markAllFilesRejected() async {
+    if (!isSupported) return;
+
+    for (final id in _panelFiles.keys.toList()) {
+      final row = _panelFiles[id];
+      if (row?.phase == _PanelFilePhase.pending) {
+        _rejectedFileIds.add(id);
+        _panelFiles.remove(id);
+      }
+    }
+
+    notifyListeners();
+    await _syncPanels();
+  }
+
+  void _syncPanelFilesFromTransferItems(List<TransferFileItem> items) {
+    for (final item in items) {
+      if (item.direction != TransferDirection.receiving) continue;
+
+      if (item.status == TransferStatus.awaitingApproval) {
+        if (_rejectedFileIds.contains(item.id)) continue;
+        if (_approvedPendingIds.contains(item.id)) continue;
+        if (!_panelFiles.containsKey(item.id)) {
+          _panelFiles[item.id] = _PanelFileRow(
+            id: item.id,
+            name: item.name,
+            phase: _PanelFilePhase.pending,
+          );
+        }
+        continue;
+      }
+
+      if (item.status == TransferStatus.inProgress ||
+          item.status == TransferStatus.verifying ||
+          item.status == TransferStatus.paused) {
+        _approvedPendingIds.remove(item.id);
+        _recentlyActiveIds.add(item.id);
+        _panelFiles[item.id] = _PanelFileRow(
+          id: item.id,
+          name: item.name,
+          phase: _PanelFilePhase.transferring,
+          progress: item.progress.clamp(0.0, 1.0),
+          status: _statusLabel(item.status),
+        );
+        continue;
+      }
+
+      if (item.status == TransferStatus.completed &&
+          _recentlyActiveIds.contains(item.id)) {
+        _panelFiles[item.id] = _PanelFileRow(
+          id: item.id,
+          name: item.name,
+          phase: _PanelFilePhase.completed,
+          progress: 1,
+          status: 'Tamamlandı',
+        );
+      }
+    }
+  }
+
+  void _maybeAutoHideFilesPanel() {
+    if (_panelFiles.isEmpty) return;
+
+    final hasPending = _panelFiles.values
+        .any((r) => r.phase == _PanelFilePhase.pending);
+    final hasActive = _panelFiles.values.any(
+      (r) => r.phase == _PanelFilePhase.transferring,
+    );
+    if (hasPending || hasActive) {
+      _filesPanelAutoHideTimer?.cancel();
+      return;
+    }
+
+    _filesPanelAutoHideTimer?.cancel();
+    _filesPanelAutoHideTimer = Timer(const Duration(seconds: 3), () {
+      _panelFiles.clear();
+      _recentlyActiveIds.clear();
+      unawaited(_syncPanels());
+      notifyListeners();
+    });
+  }
+
+  Future<void> dismissBanner(String id) async {
+    banners.removeWhere((b) => b.id == id);
+    notifyListeners();
+    await _syncPanels();
+  }
+
+  Future<void> showTransferHud() async {
+    if (!isSupported) return;
+    final items = _controller?.fileTransfer?.items ?? const <TransferFileItem>[];
+    _syncPanelFilesFromTransferItems(items);
+    _filesPanelAutoHideTimer?.cancel();
+    await _syncPanels();
+    notifyListeners();
+  }
+
+  Future<void> onTransferItemsChanged(List<TransferFileItem> items) async {
+    if (!isSupported) return;
+    if (!await shouldUseNativePanels()) return;
+
+    _syncPanelFilesFromTransferItems(items);
+    _maybeAutoHideFilesPanel();
+
+    notifyListeners();
+    if (_panelFiles.isNotEmpty || banners.isNotEmpty) {
+      _scheduleProgressSync();
+    }
+  }
+
+  void _scheduleProgressSync() {
+    _progressSyncDebounce?.cancel();
+    final now = DateTime.now();
+    final last = _lastProgressSync;
+    if (last != null && now.difference(last) < const Duration(milliseconds: 120)) {
+      _progressSyncDebounce = Timer(const Duration(milliseconds: 120), () {
+        _lastProgressSync = DateTime.now();
+        unawaited(_syncPanels());
+        notifyListeners();
+      });
+      return;
+    }
+    _lastProgressSync = now;
+    unawaited(_syncPanels());
+  }
+
+  Future<void> restoreNormalAndShow() async {
+    if (!isSupported) return;
+    _filesPanelAutoHideTimer?.cancel();
+    _reconnectCloseTimer?.cancel();
+    _detachReconnectController();
+    disableOverlayOnlySession();
+    banners.clear();
+    _panelFiles.clear();
+    _recentlyActiveIds.clear();
+    _rejectedFileIds.clear();
+    _approvedPendingIds.clear();
+    _filesPanelPeerName = null;
+    _progressSyncDebounce?.cancel();
+    notifyListeners();
+    await _hideAllPanels();
+    await DesktopWindowService.configure();
+    await DesktopBackgroundService.instance.showMainWindow(force: true);
+  }
+
+  Future<void> hideOverlayToTray() async {
+    if (!isSupported) return;
+    _filesPanelAutoHideTimer?.cancel();
+    _reconnectCloseTimer?.cancel();
+    _detachReconnectController();
+    disableOverlayOnlySession();
+    banners.clear();
+    _panelFiles.clear();
+    _recentlyActiveIds.clear();
+    _rejectedFileIds.clear();
+    _approvedPendingIds.clear();
+    _filesPanelPeerName = null;
+    _progressSyncDebounce?.cancel();
+    notifyListeners();
+    await _hideAllPanels();
+  }
+
+  Future<void> _syncPanels() async {
+    if (!_usesNativePanels) return;
+
+    final reconnectBanner = banners.cast<DesktopBannerEntry?>().firstWhere(
+          (b) => b!.kind == DesktopBannerKind.reconnect,
+          orElse: () => null,
+        );
+
+    Map<String, dynamic>? reconnectPayload;
+    if (reconnectBanner != null) {
+      final r = reconnectBanner.reconnect;
+      reconnectPayload = {
+        'title': _reconnectTitle(reconnectBanner),
+        'subtitle': _reconnectSubtitle(),
+        'phase': _reconnectPhase.name,
+        'fromDeviceId': r?.fromDeviceId ?? '',
+        'fromDeviceName': r?.fromDeviceName ?? _reconnectPeerName,
+        'clientCreatedAt': r?.clientCreatedAt ?? 0,
+      };
+    }
+
+    Map<String, dynamic>? filesPayload;
+    if (_panelFiles.isNotEmpty) {
+      final rows = _panelFiles.values.toList();
+      final pendingCount =
+          rows.where((r) => r.phase == _PanelFilePhase.pending).length;
+      final peer = _filesPanelPeerName ?? _controller?.peerDisplayName ?? 'Cihaz';
+
+      filesPayload = {
+        'title': pendingCount > 0
+            ? '$peer dosya göndermek istiyor'
+            : 'Aktif transfer',
+        'subtitle': pendingCount > 0
+            ? '$pendingCount dosya onay bekliyor'
+            : peer,
+        'showBulkActions': pendingCount > 0,
+        'items': [
+          for (final row in rows.take(8))
+            {
+              'id': row.id,
+              'name': _truncateFileName(row.name),
+              'phase': row.phase.name,
+              'progress': row.progress.clamp(0.0, 1.0),
+              'status': row.status.isEmpty
+                  ? (row.phase == _PanelFilePhase.pending
+                      ? 'Onay bekliyor'
+                      : 'Başlatılıyor')
+                  : row.status,
+            },
+        ],
+      };
+    }
+
+    if (reconnectPayload == null && filesPayload == null) {
+      await _hideAllPanels();
+      return;
+    }
+
+    try {
+      await _channel.invokeMethod<void>('sync', {
+        if (reconnectPayload != null) 'reconnect': reconnectPayload,
+        if (filesPayload != null) 'files': filesPayload,
+      });
+    } catch (e, stack) {
+      debugPrint('Yardımcı panel senkronu başarısız: $e\n$stack');
+    }
+  }
+
+  String _reconnectTitle(DesktopBannerEntry banner) {
+    switch (_reconnectPhase) {
+      case ReconnectPanelPhase.connecting:
+        return '$_reconnectPeerName ile bağlanılıyor';
+      case ReconnectPanelPhase.connected:
+        return '$_reconnectPeerName bağlandı';
+      case ReconnectPanelPhase.prompt:
+        return banner.title;
+    }
+  }
+
+  String _reconnectSubtitle() {
+    switch (_reconnectPhase) {
+      case ReconnectPanelPhase.connecting:
+        return 'Oda açılıyor, lütfen bekleyin…';
+      case ReconnectPanelPhase.connected:
+        return 'Bağlantı kuruldu. Dosya transferine hazır.';
+      case ReconnectPanelPhase.prompt:
+        return 'Onaylayın veya reddedin.';
+    }
+  }
+
+  String _truncateFileName(String name, {int maxLen = 42}) {
+    if (name.length <= maxLen) return name;
+    final ext = name.contains('.') ? name.substring(name.lastIndexOf('.')) : '';
+    final baseMax = maxLen - ext.length - 1;
+    if (baseMax < 8) return '${name.substring(0, maxLen - 1)}…';
+    return '${name.substring(0, baseMax)}…$ext';
+  }
+
+  Future<void> _hideAllPanels() async {
+    if (!_usesNativePanels) return;
+    try {
+      await _channel.invokeMethod<void>('hideAll');
+    } catch (e, stack) {
+      debugPrint('Yardımcı paneller kapatılamadı: $e\n$stack');
+    }
+  }
+
+  String _statusLabel(TransferStatus status) {
+    switch (status) {
+      case TransferStatus.completed:
+        return 'Tamamlandı';
+      case TransferStatus.verifying:
+        return 'Doğrulanıyor';
+      case TransferStatus.paused:
+        return 'Duraklatıldı';
+      default:
+        return 'Alınıyor';
+    }
+  }
+
+  Future<void> _handleNativeAction(MethodCall call) async {
+    if (call.method != 'onAction') return;
+    final args = Map<String, dynamic>.from(call.arguments as Map);
+    final action = args['action'] as String? ?? '';
+
+    switch (action) {
+      case 'reconnect_approve':
+        onReconnectApproved?.call(
+          ReconnectRequest(
+            fromDeviceId: args['fromDeviceId'] as String? ?? '',
+            fromDeviceName: args['fromDeviceName'] as String? ?? 'Cihaz',
+            clientCreatedAt: (args['clientCreatedAt'] as num?)?.toInt() ??
+                DateTime.now().millisecondsSinceEpoch,
+          ),
+        );
+      case 'reconnect_reject':
+        _reconnectCloseTimer?.cancel();
+        _detachReconnectController();
+        onReconnectRejected?.call(
+          ReconnectRequest(
+            fromDeviceId: args['fromDeviceId'] as String? ?? '',
+            fromDeviceName: args['fromDeviceName'] as String? ?? 'Cihaz',
+            clientCreatedAt: (args['clientCreatedAt'] as num?)?.toInt() ??
+                DateTime.now().millisecondsSinceEpoch,
+          ),
+        );
+        await _dismissReconnectBanner();
+      case 'file_accept':
+        onFileApproved?.call(args['fileId'] as String? ?? '');
+      case 'file_reject':
+        onFileRejected?.call(args['fileId'] as String? ?? '');
+      case 'files_accept_all':
+        onAcceptAllFiles?.call();
+      case 'files_reject_all':
+        onRejectAllFiles?.call();
+      case 'open_main':
+        onOpenMainApp?.call();
+    }
+  }
+}

@@ -17,14 +17,40 @@ class SessionExitHelper {
     required String fromDeviceId,
     required String fromDeviceName,
   }) async {
+    if (RecentConnectionService.instance.isReconnectFlowActiveFor(fromDeviceId)) {
+      return;
+    }
+
     final controller = ActiveSessionRegistry.instance.activeController;
     if (controller == null) return;
-    if (controller.userInitiatedLeave || controller.peerHasLeft) return;
+    if (controller.userInitiatedLeave ||
+        controller.peerHasLeft ||
+        controller.supersededByReconnect) {
+      return;
+    }
     if (controller.peerDeviceId != fromDeviceId) return;
 
     // Kısa debounce — arka plan kopmasındaki yanlış sinyaller için.
     await Future<void>.delayed(const Duration(seconds: 2));
-    if (controller.isDisposed || controller.peerHasLeft) return;
+
+    // Debounce sırasında karşı cihaz yeniden bağlanmış olabilir: bu durumda
+    // gelen sinyal ESKİ (öldürülen) oturuma ait bayat bir sinyaldir; yeni
+    // oturumu kapatmamalıyız. Aynı peerDeviceId'yi paylaştıkları için bu
+    // kontroller şarttır.
+    if (RecentConnectionService.instance.isReconnectFlowActiveFor(fromDeviceId)) {
+      return;
+    }
+    final current = ActiveSessionRegistry.instance.activeController;
+    // Debounce sırasında yeni bir oturum (yeni controller) devraldıysa dokunma.
+    if (!identical(current, controller)) return;
+    if (controller.isDisposed ||
+        controller.peerHasLeft ||
+        controller.supersededByReconnect ||
+        controller.userInitiatedLeave) {
+      return;
+    }
+    // Bu arada yeniden bağlandıysa bayat sinyali yok say.
+    if (controller.isConnected || controller.isReconnecting) return;
 
     await leaveAndGoHome(
       controller: controller,

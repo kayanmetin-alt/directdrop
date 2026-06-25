@@ -25,6 +25,7 @@ class NotificationService {
   bool _initialized = false;
   bool _localNotificationsReady = false;
   void Function(WakeRequest request)? onWakeNotificationTapped;
+  void Function()? onIncomingFilesTapped;
   void Function(ReconnectRequest request)? onReconnectNotificationTapped;
   void Function(ReconnectRequest request)? onReconnectNotificationApproved;
   void Function(ReconnectRequest request)? onReconnectNotificationRejected;
@@ -224,6 +225,11 @@ class NotificationService {
     final payload = response.payload;
     if (payload == null || payload.isEmpty) return;
 
+    if (payload == 'incoming_files') {
+      onIncomingFilesTapped?.call();
+      return;
+    }
+
     if (payload.startsWith('reconnect|')) {
       final request = _reconnectFromPayload(payload);
       if (request == null) return;
@@ -362,6 +368,45 @@ class NotificationService {
       );
     } catch (e) {
       debugPrint('Bildirim gösterilemedi: $e');
+    }
+  }
+
+  /// Uygulama arka plandayken (masaüstü menü çubuğu) gelen dosya teklifleri için
+  /// bildirim gösterir. Dokunulduğunda pencere öne getirilir ve onay paneli açılır.
+  Future<void> showIncomingFilesNotification({
+    required String peerName,
+    required int count,
+  }) async {
+    if (!_localNotificationsReady) return;
+
+    final title = count > 1
+        ? '$peerName $count dosya göndermek istiyor'
+        : '$peerName dosya göndermek istiyor';
+    const body = 'Onaylamak veya reddetmek için dokunun.';
+
+    try {
+      await _local.show(
+        'directdrop_incoming_files'.hashCode,
+        title,
+        body,
+        const NotificationDetails(
+          iOS: DarwinNotificationDetails(
+            interruptionLevel: InterruptionLevel.timeSensitive,
+          ),
+          macOS: DarwinNotificationDetails(
+            interruptionLevel: InterruptionLevel.timeSensitive,
+          ),
+          android: AndroidNotificationDetails(
+            'directdrop_wake',
+            'DirectDrop Bağlantı',
+            importance: Importance.high,
+            priority: Priority.high,
+          ),
+        ),
+        payload: 'incoming_files',
+      );
+    } catch (e) {
+      debugPrint('Gelen dosya bildirimi gösterilemedi: $e');
     }
   }
 }

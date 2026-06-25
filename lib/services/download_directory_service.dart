@@ -19,9 +19,7 @@ class DownloadDirectoryService extends ChangeNotifier {
     if (Platform.isWindows) {
       final userProfile = Platform.environment['USERPROFILE'];
       if (userProfile != null && userProfile.isNotEmpty) {
-        return Directory(
-          p.join(userProfile, 'Documents', 'DirectDrop', 'Downloads'),
-        );
+        return Directory(p.join(userProfile, 'Documents', 'DirectDrop'));
       }
     }
 
@@ -43,7 +41,10 @@ class DownloadDirectoryService extends ChangeNotifier {
     }
 
     final docs = await getApplicationDocumentsDirectory();
-    return Directory(p.join(docs.path, 'DirectDrop', 'Downloads'));
+    if (Platform.isIOS) {
+      return Directory(p.join(docs.path, 'Downloads'));
+    }
+    return Directory(p.join(docs.path, 'DirectDrop'));
   }
 
   Future<Directory> downloadsDirectory() async {
@@ -54,22 +55,20 @@ class DownloadDirectoryService extends ChangeNotifier {
   /// Kullanıcıya gösterilen konum (sandbox yolu değil).
   Future<String> displayPath() async {
     if (Platform.isIOS) {
-      return 'Dosyalar → iPhone\'umda → DirectDrop → DirectDrop → Downloads';
+      return 'Dosyalar → DirectDrop → Downloads';
     }
     if (Platform.isAndroid) {
       final dir = await downloadsDirectory();
       if (dir.path.contains('/Android/data/')) {
-        return 'Dosyalar → Android → DirectDrop → Download → DirectDrop';
+        return 'Dosyalar → DirectDrop → İndirilenler';
       }
       return 'Dosyalar → İndirilenler → DirectDrop';
     }
     if (Platform.isMacOS) {
-      final dir = await downloadsDirectory();
-      return dir.path;
+      return 'Documents → DirectDrop';
     }
     if (Platform.isWindows) {
-      final dir = await downloadsDirectory();
-      return dir.path;
+      return 'Documents → DirectDrop';
     }
     final dir = await downloadsDirectory();
     return dir.path;
@@ -80,35 +79,65 @@ class DownloadDirectoryService extends ChangeNotifier {
     if (!await dir.exists()) {
       await dir.create(recursive: true);
     }
-    if (Platform.isAndroid) {
-      await _migrateLegacyAndroidDownloads(dir);
-    }
+    await _migrateLegacyDownloads(dir);
     return dir;
   }
 
-  /// Eski sürümlerde uygulama içi klasöre kaydedilen dosyaları taşır.
-  Future<void> _migrateLegacyAndroidDownloads(Directory target) async {
+  Future<void> _migrateLegacyDownloads(Directory target) async {
     final sources = <Directory>[];
 
-    final docs = await getApplicationDocumentsDirectory();
-    sources.add(Directory(p.join(docs.path, 'DirectDrop', 'Downloads')));
+    if (Platform.isIOS) {
+      final docs = await getApplicationDocumentsDirectory();
+      sources.add(Directory(p.join(docs.path, 'DirectDrop', 'Downloads')));
+    } else if (Platform.isAndroid) {
+      final docs = await getApplicationDocumentsDirectory();
+      sources.add(Directory(p.join(docs.path, 'DirectDrop', 'Downloads')));
+      sources.add(Directory(p.join(target.path, 'Downloads')));
 
-    final appDownloads = await getDownloadsDirectory();
-    if (appDownloads != null) {
-      sources.add(Directory(p.join(appDownloads.path, 'DirectDrop')));
+      final appDownloads = await getDownloadsDirectory();
+      if (appDownloads != null) {
+        sources.add(
+          Directory(p.join(appDownloads.path, 'DirectDrop', 'Downloads')),
+        );
+      }
+    } else {
+      // macOS, Windows ve diğer masaüstü: eski DirectDrop/Downloads yapısı.
+      sources.add(Directory(p.join(target.path, 'Downloads')));
+      if (Platform.isWindows) {
+        final userProfile = Platform.environment['USERPROFILE'];
+        if (userProfile != null && userProfile.isNotEmpty) {
+          sources.add(
+            Directory(
+              p.join(userProfile, 'Documents', 'DirectDrop', 'Downloads'),
+            ),
+          );
+        }
+      } else {
+        final docs = await getApplicationDocumentsDirectory();
+        sources.add(Directory(p.join(docs.path, 'DirectDrop', 'Downloads')));
+      }
     }
 
     for (final legacy in sources) {
-      if (!await legacy.exists()) continue;
-      await for (final entity in legacy.list()) {
-        if (entity is! File) continue;
-        final dest = File(p.join(target.path, p.basename(entity.path)));
-        if (await dest.exists()) continue;
-        try {
-          await entity.copy(dest.path);
-        } catch (e) {
-          debugPrint('Android dosya taşıma: $e');
-        }
+      await _migrateFilesFromDirectory(legacy, target);
+    }
+  }
+
+  Future<void> _migrateFilesFromDirectory(
+    Directory source,
+    Directory target,
+  ) async {
+    if (!await source.exists()) return;
+    if (p.normalize(source.path) == p.normalize(target.path)) return;
+
+    await for (final entity in source.list()) {
+      if (entity is! File) continue;
+      final dest = File(p.join(target.path, p.basename(entity.path)));
+      if (await dest.exists()) continue;
+      try {
+        await entity.copy(dest.path);
+      } catch (e) {
+        debugPrint('Dosya taşıma (${source.path}): $e');
       }
     }
   }

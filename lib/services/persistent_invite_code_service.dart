@@ -34,6 +34,18 @@ class PersistentInviteCodeService {
     return code;
   }
 
+  Future<void> resyncCurrentMapping() async {
+    if (_cachedCode != null) {
+      await _syncToFirebase(_cachedCode!);
+      return;
+    }
+    final prefs = await SharedPreferences.getInstance();
+    final code = prefs.getString(_prefKey);
+    if (code == null || code.isEmpty) return;
+    _cachedCode = code;
+    await _syncToFirebase(code);
+  }
+
   Future<String> refresh() async {
     final prefs = await SharedPreferences.getInstance();
     final oldCode = prefs.getString(_prefKey);

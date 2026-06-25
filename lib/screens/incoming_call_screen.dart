@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../models/reconnect_request.dart';
+import '../services/desktop_background_service.dart';
 import '../services/recent_connection_service.dart';
 import 'incoming_reconnect_screen.dart';
 
@@ -323,10 +324,6 @@ class _LinkPulseIndicator extends StatelessWidget {
 
 /// Masaüstünde uygulama penceresini öne getirir.
 Future<void> activateAppWindowForCall() async {
-  if (Platform.isMacOS) {
-    const channel = MethodChannel('com.directdrop.app/window');
-    try {
-      await channel.invokeMethod<void>('activate');
-    } catch (_) {}
-  }
+  if (!Platform.isMacOS && !Platform.isWindows) return;
+  await DesktopBackgroundService.instance.showMainWindow();
 }

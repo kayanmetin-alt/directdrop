@@ -9,6 +9,7 @@ import '../models/paired_device.dart';
 import '../models/room.dart';
 import '../models/signaling_message.dart';
 import '../models/transfer_file.dart';
+import '../models/transfer_restore_state.dart';
 import '../utils/photo_export_compatibility.dart';
 import '../utils/room_code_generator.dart';
 import '../services/photo_export_service.dart';
@@ -19,9 +20,12 @@ import '../services/firebase_auth_service.dart';
 import '../services/firebase_signaling_service.dart';
 import '../services/pair_connect_coordinator.dart';
 import '../services/paired_devices_service.dart';
-import '../services/android_transfer_foreground_service.dart';
+import '../services/mobile_transfer_keepalive_service.dart';
+import '../services/desktop_background_service.dart';
+import '../services/desktop_overlay_service.dart';
 import '../services/screen_wake_service.dart';
 import '../services/transfer_history_service.dart';
+import '../services/transfer_checkpoint_service.dart';
 import '../services/webrtc_service.dart';
 import '../widgets/media_prepare_overlay.dart';
 
@@ -51,6 +55,16 @@ class TransferSessionController extends ChangeNotifier {
   bool _hadSuccessfulConnection = false;
   bool _pairSaved = false;
   bool _wasBackgrounded = false;
+  bool _supersededByReconnect = false;
+
+  bool get supersededByReconnect => _supersededByReconnect;
+
+  /// Yeniden bağlanma akışı başladığında eski oturum ekranının ana sayfaya
+  /// dönmesini engellemek için işaretlenir.
+  void markSupersededByReconnect() {
+    _supersededByReconnect = true;
+    _userInitiatedLeave = true;
+  }
   int _guestWaitGeneration = 0;
   int _connectionWatchGeneration = 0;
   DateTime? _lastReconnectAt;
@@ -65,6 +79,10 @@ class TransferSessionController extends ChangeNotifier {
   String? peerDisplayName;
   String? peerPlatform;
   final Set<String> _persistedTransferIds = {};
+  final Set<String> _notifiedIncomingIds = {};
+  Timer? _checkpointDebounce;
+  bool _checkpointWriteScheduled = false;
+  bool _diskRestoreAttempted = false;
 
   RoomSession? get session => _session;
   WebRtcConnectionState get connectionState => _connectionState;
@@ -74,6 +92,7 @@ class TransferSessionController extends ChangeNotifier {
   bool get peerHasLeft => _peerHasLeft;
   bool get userInitiatedLeave => _userInitiatedLeave;
   bool get hadSuccessfulConnection => _hadSuccessfulConnection;
+  bool get isBackgrounded => _wasBackgrounded;
   bool get isDisposed => _disposed;
   bool get isConnected =>
       _connectionState == WebRtcConnectionState.connected ||
@@ -192,6 +211,9 @@ class TransferSessionController extends ChangeNotifier {
 
   Future<void> cancelTransfer(String fileId) async {
     await _fileTransfer?.cancelTransfer(fileId);
+    // Yarım dosya silindi; kalıcı checkpoint'i de hemen kaldır ki uygulama
+    // hemen kapansa bile bu transfer bir daha "devam ettirilebilir" görünmesin.
+    await TransferCheckpointService.instance.remove(fileId);
   }
 
   List<TransferFileItem> get awaitingApprovalFiles =>
@@ -200,12 +222,12 @@ class TransferSessionController extends ChangeNotifier {
   String get deviceName => DeviceIdentityService.instance.displayName;
 
   void _syncScreenWake() {
+    final items = _fileTransfer?.items ?? const [];
+    final transferActive = ScreenWakeService.hasActiveTransferWork(items);
+    unawaited(ScreenWakeService.instance.setTransferActive(transferActive));
     final roomActive = _session != null && !_disposed;
-    unawaited(ScreenWakeService.instance.setRoomActive(roomActive));
     unawaited(
-      AndroidTransferForegroundService.setActive(
-        roomActive && isPaired,
-      ),
+      MobileTransferKeepAliveService.setSessionActive(roomActive && isPaired),
     );
   }
 
@@ -541,6 +563,7 @@ class TransferSessionController extends ChangeNotifier {
   Future<void> _startWebRtc({
     required String remotePeerId,
     required bool isInitiator,
+    TransferRestoreState? transferRestore,
   }) async {
     final session = _session!;
     _webRtc = WebRtcService(
@@ -554,12 +577,186 @@ class TransferSessionController extends ChangeNotifier {
     _connectionSubscription = _webRtc!.connectionState.listen(_onConnectionStateChanged);
 
     await _webRtc!.initialize();
-    _fileTransfer = FileTransferService(webRtc: _webRtc!);
+    _fileTransfer = transferRestore != null
+        ? FileTransferService.restore(
+            webRtc: _webRtc!,
+            state: transferRestore,
+          )
+        : FileTransferService(webRtc: _webRtc!);
     await _transferSubscription?.cancel();
+    _attachFileTransferListener();
+  }
+
+  void _attachFileTransferListener() {
     _transferSubscription = _fileTransfer!.transfers.listen((items) {
       if (!_disposed) notifyListeners();
+      _syncScreenWake();
       unawaited(_persistCompletedTransfers(items));
+      unawaited(_notifyIncomingFilesIfHidden(items));
+      unawaited(_syncDesktopOverlay(items));
+      _scheduleCheckpointPersist(items);
     });
+  }
+
+  // Aktif transfer sırasında _emit() çok sık çağrıldığından debounce yerine
+  // throttle kullanıyoruz: en fazla ~2 saniyede bir yaz, ama düzenli olarak yaz
+  // (böylece ani kapanmada güncel ilerleme diskte olur).
+  void _scheduleCheckpointPersist(List<TransferFileItem> items) {
+    if (_checkpointWriteScheduled) return;
+    _checkpointWriteScheduled = true;
+    _checkpointDebounce = Timer(const Duration(seconds: 2), () {
+      _checkpointWriteScheduled = false;
+      final current = _fileTransfer?.currentItems ?? items;
+      unawaited(_persistTransferCheckpoints(current));
+    });
+  }
+
+  Future<void> flushTransferCheckpoints() async {
+    _checkpointDebounce?.cancel();
+    _checkpointDebounce = null;
+    _checkpointWriteScheduled = false;
+    final items = _fileTransfer?.currentItems;
+    if (items == null || items.isEmpty) return;
+    await _persistTransferCheckpoints(items);
+  }
+
+  Future<void> _persistTransferCheckpoints(List<TransferFileItem> items) async {
+    if (_disposed || _userInitiatedLeave) return;
+    await _ensurePeerInfo();
+    final peerId = peerDeviceId;
+    final peerName = peerDisplayName ?? 'Cihaz';
+    if (peerId == null) return;
+
+    for (final item in items) {
+      if (item.status == TransferStatus.completed ||
+          item.status == TransferStatus.cancelled) {
+        await TransferCheckpointService.instance.remove(item.id);
+      }
+    }
+
+    await TransferCheckpointService.instance.syncSession(
+      peerDeviceId: peerId,
+      peerDisplayName: peerName,
+      items: items,
+    );
+  }
+
+  /// Bağlantı kurulunca diskteki yarım transferleri otomatik geri yükler.
+  /// Hangi ekrandan bağlanıldığından bağımsız çalışır (her iki cihazda da).
+  void _scheduleDiskRestore() {
+    if (_diskRestoreAttempted || _disposed) return;
+    unawaited(_runDiskRestoreWhenReady());
+  }
+
+  Future<void> _runDiskRestoreWhenReady() async {
+    // Veri kanalı açılana kadar bekle.
+    for (var i = 0; i < 150; i++) {
+      if (_disposed) return;
+      if (isDataChannelReady) break;
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    }
+    if (_disposed || !isDataChannelReady) return;
+
+    // peerDeviceId çözülene kadar bekle; aksi halde hangi checkpoint'lerin
+    // geri yükleneceğini bilemeyiz.
+    for (var i = 0; i < 50; i++) {
+      if (_disposed) return;
+      await _ensurePeerInfo();
+      if (peerDeviceId != null) break;
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    }
+
+    await maybeRestoreFromDisk();
+  }
+
+  /// Uygulama yeniden açıldıktan sonra diskteki yarım transferleri belleğe yükler.
+  Future<void> maybeRestoreFromDisk() async {
+    if (_diskRestoreAttempted || _disposed || _webRtc == null || !isConnected) {
+      return;
+    }
+
+    final currentItems = _fileTransfer?.currentItems ?? [];
+    final hasResumableInMemory = currentItems.any(
+      (item) =>
+          item.bytesTransferred > 0 &&
+          item.bytesTransferred < item.size &&
+          item.status != TransferStatus.completed &&
+          item.status != TransferStatus.cancelled,
+    );
+    if (hasResumableInMemory) {
+      _diskRestoreAttempted = true;
+      return;
+    }
+
+    await _ensurePeerInfo();
+    final peerId = peerDeviceId;
+    // peerId henüz çözülmediyse bayrağı set etme; sonraki bağlantı denemesinde
+    // (ya da çağrıda) tekrar denenebilsin.
+    if (peerId == null) return;
+
+    _diskRestoreAttempted = true;
+
+    final state =
+        await TransferCheckpointService.instance.buildRestoreState(peerId);
+    if (state == null || state.items.isEmpty) return;
+
+    await applyDiskRestore(state);
+  }
+
+  Future<void> applyDiskRestore(TransferRestoreState state) async {
+    if (_disposed || _webRtc == null || !isConnected) return;
+
+    await _transferSubscription?.cancel();
+    await _fileTransfer?.dispose();
+    _fileTransfer = FileTransferService.restore(
+      webRtc: _webRtc!,
+      state: state,
+    );
+    _attachFileTransferListener();
+    // Diskten geri yükleme: transferleri otomatik başlatma; "duraklatıldı"
+    // olarak göster, kullanıcı Play'e basınca devam etsin.
+    await _fileTransfer!.resumeAfterReconnect(autoResume: false);
+    if (!_disposed) notifyListeners();
+  }
+
+  /// Masaüstünde pencere menü çubuğuna gizlenmişken yeni gelen dosya teklifleri
+  /// için banner veya bildirim gösterir.
+  Future<void> _notifyIncomingFilesIfHidden(
+    List<TransferFileItem> items,
+  ) async {
+    if (!DesktopBackgroundService.isSupported) return;
+    if (!DesktopBackgroundService.instance.keepsRunningInBackground) return;
+
+    final pendingIncoming = items
+        .where((i) =>
+            i.direction == TransferDirection.receiving &&
+            i.status == TransferStatus.awaitingApproval)
+        .toList();
+
+    final newOnes = pendingIncoming
+        .where((i) => !_notifiedIncomingIds.contains(i.id))
+        .toList();
+    if (newOnes.isEmpty) return;
+
+    final hidden = await DesktopBackgroundService.instance.isMainWindowHidden();
+    if (!hidden) return;
+
+    for (final i in newOnes) {
+      _notifiedIncomingIds.add(i.id);
+    }
+
+    await DesktopOverlayService.instance.showIncomingFilesBanner(
+      peerName: peerDisplayName ?? 'Cihaz',
+      files: pendingIncoming,
+    );
+  }
+
+  Future<void> _syncDesktopOverlay(List<TransferFileItem> items) async {
+    if (!DesktopOverlayService.isSupported) return;
+    if (!await DesktopBackgroundService.instance.isMainWindowHidden()) return;
+
+    final overlay = DesktopOverlayService.instance;
+    await overlay.onTransferItemsChanged(items);
   }
 
   Future<void> _persistCompletedTransfers(List<TransferFileItem> items) async {
@@ -617,11 +814,18 @@ class TransferSessionController extends ChangeNotifier {
       }
     }
     await _armPeerDepartureSignals();
+    if (!_disposed) notifyListeners();
   }
+
+  /// Kalıcı cihaz kimliğini (transfer geçmişi filtrelemesi için) çözümler.
+  Future<void> ensurePeerDeviceResolved() => _ensurePeerInfo();
 
   void markBackgrounded() {
     _wasBackgrounded = true;
+    _fileTransfer?.prepareForBackgroundInterrupt();
     unawaited(_prepareForBackground());
+    unawaited(flushTransferCheckpoints());
+    unawaited(MobileTransferKeepAliveService.setBackgroundKeepalive(true));
   }
 
   Future<void> _prepareForBackground() async {
@@ -645,6 +849,7 @@ class TransferSessionController extends ChangeNotifier {
   void onAppResumed() {
     if (!_wasBackgrounded) return;
     _wasBackgrounded = false;
+    unawaited(MobileTransferKeepAliveService.setBackgroundKeepalive(false));
     unawaited(_restoreFromBackground());
   }
 
@@ -660,7 +865,14 @@ class TransferSessionController extends ChangeNotifier {
       debugPrint('Ön plana dönüş: $e');
     }
 
-    // ICE bazen kendi kendine toparlanır; hemen yeniden kurmayı bekle.
+    if (_hadSuccessfulConnection &&
+        !isConnected &&
+        !_reconnecting &&
+        (_connectionState == WebRtcConnectionState.disconnected ||
+            _connectionState == WebRtcConnectionState.failed)) {
+      unawaited(reconnectIfNeeded(force: true));
+    }
+
     _deferredReconnectTimer?.cancel();
     _deferredReconnectTimer = Timer(const Duration(seconds: 2), () {
       unawaited(reconnectIfNeeded());
@@ -675,9 +887,16 @@ class TransferSessionController extends ChangeNotifier {
       _connectionWatchTimer?.cancel();
       _deferredReconnectTimer?.cancel();
       unawaited(_persistPairIfNeeded());
+      _scheduleDiskRestore();
     } else if (!_peerHasLeft &&
         (state == WebRtcConnectionState.disconnected ||
             state == WebRtcConnectionState.failed)) {
+      if (_wasBackgrounded) {
+        // iOS arka planda WebRTC askıya alınır; oturumu sonlandırma.
+        _connectionState = WebRtcConnectionState.disconnected;
+        if (!_disposed) notifyListeners();
+        return;
+      }
       _scheduleDeferredReconnect();
     }
 
@@ -748,7 +967,9 @@ class TransferSessionController extends ChangeNotifier {
   }
 
   void _onPeerPresenceChanged(DevicePresence presence) {
-    if (_peerHasLeft || _userInitiatedLeave || _disposed) return;
+    if (_peerHasLeft || _userInitiatedLeave || _disposed || _wasBackgrounded) {
+      return;
+    }
     if (presence.online) {
       _peerOfflineDebounce?.cancel();
       _peerOfflineDebounce = null;
@@ -808,7 +1029,11 @@ class TransferSessionController extends ChangeNotifier {
 
     try {
       await _connectionSubscription?.cancel();
-      await _fileTransfer?.dispose();
+
+      TransferRestoreState? transferRestore;
+      if (_fileTransfer != null) {
+        transferRestore = await _fileTransfer!.detachForReconnect();
+      }
       await _webRtc?.dispose();
       _fileTransfer = null;
       _webRtc = null;
@@ -843,7 +1068,12 @@ class TransferSessionController extends ChangeNotifier {
       await _startWebRtc(
         remotePeerId: session.remotePeerId!,
         isInitiator: isInitiator,
+        transferRestore: transferRestore,
       );
+
+      if (transferRestore != null) {
+        await _fileTransfer?.resumeAfterReconnect();
+      }
 
       await _signaling.replayPendingMessages(
         localPeerId: session.peerId,
@@ -945,12 +1175,18 @@ class TransferSessionController extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> disconnect({bool userInitiated = false}) async {
+  Future<void> disconnect({
+    bool userInitiated = false,
+    bool notifyPeer = true,
+  }) async {
     if (_disconnecting || _disposed) return;
     if (userInitiated) _userInitiatedLeave = true;
     _disconnecting = true;
     _reconnecting = false;
     _guestWaitGeneration++;
+
+    _checkpointDebounce?.cancel();
+    _checkpointDebounce = null;
 
     _connectionWatchTimer?.cancel();
     _deferredReconnectTimer?.cancel();
@@ -974,7 +1210,8 @@ class TransferSessionController extends ChangeNotifier {
         await _signaling.closeRoom();
       }
 
-      if (peerId != null &&
+      if (notifyPeer &&
+          peerId != null &&
           (_hadSuccessfulConnection || _session?.remotePeerId != null)) {
         await _deviceRegistry.sendPeerDeparted(
           targetDeviceId: peerId,
@@ -992,6 +1229,9 @@ class TransferSessionController extends ChangeNotifier {
           myDeviceId: myId,
           peerDeviceId: peerId,
         );
+        if (userInitiated) {
+          await TransferCheckpointService.instance.clearForPeer(peerId);
+        }
       }
     } catch (e) {
       debugPrint('disconnect notify peer: $e');

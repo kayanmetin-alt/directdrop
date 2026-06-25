@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
 class RoomCodeDisplay extends StatelessWidget {
@@ -15,6 +16,17 @@ class RoomCodeDisplay extends StatelessWidget {
   /// Kart içinde kullanıldığında dış Card ve fazla boşluk kaldırılır.
   final bool embedded;
 
+  Future<void> _copyRoomCode(BuildContext context) async {
+    await Clipboard.setData(ClipboardData(text: roomCode));
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Oda kodu kopyalandı: $roomCode'),
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -28,12 +40,24 @@ class RoomCodeDisplay extends StatelessWidget {
           style: theme.textTheme.titleMedium,
         ),
         const SizedBox(height: 8),
-        Text(
-          roomCode,
-          style: theme.textTheme.headlineMedium?.copyWith(
-            letterSpacing: isMobile ? 4 : 8,
-            fontWeight: FontWeight.bold,
-          ),
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              roomCode,
+              style: theme.textTheme.headlineMedium?.copyWith(
+                letterSpacing: isMobile ? 4 : 8,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(width: 8),
+            IconButton.filledTonal(
+              onPressed: () => _copyRoomCode(context),
+              icon: const Icon(Icons.copy_rounded),
+              tooltip: 'Oda kodunu kopyala',
+              visualDensity: VisualDensity.compact,
+            ),
+          ],
         ),
         SizedBox(height: isMobile ? 16 : 24),
         RepaintBoundary(

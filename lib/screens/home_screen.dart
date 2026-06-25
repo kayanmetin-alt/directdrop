@@ -5,8 +5,11 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 
 import '../models/reconnect_request.dart';
+import '../services/device_identity_service.dart';
 import '../services/paired_devices_service.dart';
 import '../services/recent_connection_service.dart';
+import '../services/transfer_checkpoint_service.dart';
+import '../widgets/device_name_editor.dart';
 import 'host_screen.dart';
 import 'join_screen.dart';
 import '../widgets/download_location_settings.dart';
@@ -27,6 +30,8 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   final _pairedService = PairedDevicesService.instance;
   final _recentConnect = RecentConnectionService.instance;
+  final _identity = DeviceIdentityService.instance;
+  var _deviceNamePromptShown = false;
 
   @override
   void initState() {
@@ -35,6 +40,22 @@ class _HomeScreenState extends State<HomeScreen> {
     _pairedService.addListener(_onChanged);
     _recentConnect.addListener(_onChanged);
     unawaited(_recentConnect.ensureListening());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(_maybePromptDeviceName());
+      // Geçersiz (dosyası kaybolmuş) checkpoint'leri temizle. Yarım transferler
+      // ana ekranda gösterilmez; ilgili cihaza bağlanınca duraklatılmış olarak
+      // transfer ekranında belirir.
+      unawaited(TransferCheckpointService.instance.pruneInvalid());
+    });
+  }
+
+  Future<void> _maybePromptDeviceName() async {
+    if (!mounted || _deviceNamePromptShown) return;
+    await _identity.load();
+    if (!mounted || _deviceNamePromptShown) return;
+    if (!_identity.needsDisplayNameSetup) return;
+    _deviceNamePromptShown = true;
+    await showDeviceNameEditorDialog(context, isFirstSetup: true);
   }
 
   @override
@@ -143,7 +164,7 @@ class _HomeScreenState extends State<HomeScreen> {
             child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              if (reconnect != null) ...[
+              if (reconnect != null && !Platform.isMacOS) ...[
                 _buildReconnectTopRow(theme, reconnect),
                 const SizedBox(height: 16),
               ],

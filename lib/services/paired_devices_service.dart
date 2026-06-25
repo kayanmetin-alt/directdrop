@@ -28,12 +28,44 @@ class PairedDevicesService extends ChangeNotifier {
             .map((e) => PairedDevice.fromJson(Map<String, dynamic>.from(e as Map)))
             .toList()
           ..sort((a, b) => b.lastConnectedAt.compareTo(a.lastConnectedAt));
+        _dedupe();
       } catch (e) {
         debugPrint('Eşleşmiş cihaz listesi okunamadı: $e');
       }
     }
     _loaded = true;
     notifyListeners();
+  }
+
+  /// Aynı cihaz için birden fazla satır oluşmasını engeller. Aynı `deviceId`
+  /// ya da (aynı ad + aynı platform) olan kayıtlar tek satırda birleştirilir;
+  /// en güncel bağlantı zamanı korunur, eksik davet kodu tamamlanır.
+  void _dedupe() {
+    bool sameDevice(PairedDevice a, PairedDevice b) {
+      if (a.deviceId == b.deviceId) return true;
+      if (a.displayName.isNotEmpty &&
+          a.displayName == b.displayName &&
+          a.platform == b.platform) {
+        return true;
+      }
+      return false;
+    }
+
+    final sorted = [..._devices]
+      ..sort((a, b) => b.lastConnectedAt.compareTo(a.lastConnectedAt));
+    final result = <PairedDevice>[];
+    for (final device in sorted) {
+      final existingIndex = result.indexWhere((r) => sameDevice(r, device));
+      if (existingIndex >= 0) {
+        final existing = result[existingIndex];
+        result[existingIndex] = existing.copyWith(
+          inviteCode: existing.inviteCode ?? device.inviteCode,
+        );
+      } else {
+        result.add(device);
+      }
+    }
+    _devices = result;
   }
 
   Future<void> savePair({
@@ -55,12 +87,27 @@ class PairedDevicesService extends ChangeNotifier {
       final byInviteIndex = inviteCode == null
           ? -1
           : _devices.indexWhere((d) => d.inviteCode == inviteCode);
+      // deviceId ve davet kodu eşleşmezse, kullanıcı aynı cihazla sıfırdan
+      // yeniden eşleştiğinde yeni satır açmak yerine aynı ada + platforma sahip
+      // mevcut kaydı güncelle (her cihaz için tek satır).
+      final byNameIndex = byInviteIndex >= 0 || displayName.isEmpty
+          ? -1
+          : _devices.indexWhere(
+              (d) => d.displayName == displayName && d.platform == platform,
+            );
       if (byInviteIndex >= 0) {
         _devices[byInviteIndex] = _devices[byInviteIndex].copyWith(
           deviceId: deviceId,
           displayName: displayName,
           lastConnectedAt: now,
           inviteCode: inviteCode,
+        );
+      } else if (byNameIndex >= 0) {
+        _devices[byNameIndex] = _devices[byNameIndex].copyWith(
+          deviceId: deviceId,
+          displayName: displayName,
+          lastConnectedAt: now,
+          inviteCode: inviteCode ?? _devices[byNameIndex].inviteCode,
         );
       } else {
         _devices.insert(
@@ -75,6 +122,7 @@ class PairedDevicesService extends ChangeNotifier {
         );
       }
     }
+    _dedupe();
     _devices.sort((a, b) => b.lastConnectedAt.compareTo(a.lastConnectedAt));
     await _persist();
     notifyListeners();

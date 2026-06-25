@@ -64,7 +64,9 @@ class _DownloadLocationSettingsState extends State<DownloadLocationSettings> {
             content: Text(
               Platform.isAndroid
                   ? 'Klasör açılamadı. Dosyalar → İndirilenler → DirectDrop klasörüne gidin.'
-                  : 'Dosyalar uygulaması açılamadı. Manuel gidin:\n$_displayPath',
+                  : Platform.isIOS
+                      ? 'Dosyalar uygulaması açılamadı. Manuel gidin:\n$_displayPath'
+                      : 'Klasör açılamadı. Manuel gidin:\n$_displayPath',
             ),
             duration: const Duration(seconds: 6),
           ),

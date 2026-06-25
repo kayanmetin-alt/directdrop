@@ -6,6 +6,7 @@ import 'package:firebase_database/firebase_database.dart';
 import '../models/paired_device.dart';
 import '../models/reconnect_request.dart';
 import 'device_identity_service.dart';
+import 'desktop_background_service.dart';
 import 'notification_service.dart';
 import 'recent_connection_service.dart';
 
@@ -86,6 +87,12 @@ class WakeListenerService {
         (Platform.isWindows || Platform.isMacOS || Platform.isLinux);
     if (!isDesktopConnect) {
       await NotificationService.instance.showWakeNotification(request);
+    } else if (DesktopBackgroundService.instance.keepsRunningInBackground) {
+      final hidden =
+          await DesktopBackgroundService.instance.isMainWindowHidden();
+      if (hidden && Platform.isMacOS) {
+        await NotificationService.instance.showWakeNotification(request);
+      }
     }
     _handler?.call(request);
   }

@@ -64,6 +64,8 @@ import FirebaseMessaging
     guard let controller else { return }
     filesChannelRegistered = true
 
+    TransferBackgroundTaskHandler.shared.register(with: controller)
+
     let channel = FlutterMethodChannel(
       name: "com.directdrop.app/files",
       binaryMessenger: controller.binaryMessenger
@@ -89,7 +91,6 @@ import FirebaseMessaging
     }
 
     let downloadsURL = documentsURL
-      .appendingPathComponent("DirectDrop", isDirectory: true)
       .appendingPathComponent("Downloads", isDirectory: true)
 
     do {
@@ -100,7 +101,7 @@ import FirebaseMessaging
     }
 
     var candidates: [URL] = []
-    for folder in [downloadsURL, documentsURL.appendingPathComponent("DirectDrop", isDirectory: true), documentsURL] {
+    for folder in [downloadsURL, documentsURL] {
       if let shared = sharedDocumentsURL(for: folder) {
         candidates.append(shared)
       }

@@ -123,7 +123,7 @@ class SendFilePickerService {
   }
 
   static Future<List<String>?> _pickFromDeviceStorage() async {
-    final result = await FilePicker.platform.pickFiles(
+    final result = await FilePicker.pickFiles(
       allowMultiple: true,
       withReadStream: false,
       dialogTitle: 'Gönderilecek dosyaları seçin',

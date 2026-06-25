@@ -30,6 +30,7 @@
 		DD7A00022044BFA00003C046 /* DirectDropDragTarget.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD7A00012044BFA00003C046 /* DirectDropDragTarget.swift */; };
 		DD7A00042044BFA00003C047 /* PhotosPickerHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD7A00032044BFA00003C047 /* PhotosPickerHandler.swift */; };
 		DD7A00062044BFA00003C049 /* WindowFrameStorage.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD7A00052044BFA00003C049 /* WindowFrameStorage.swift */; };
+		DD7A00082044BFA00003C04A /* DesktopAuxiliaryPanels.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD7A00072044BFA00003C04A /* DesktopAuxiliaryPanels.swift */; };
 		5B92E2A1CB194B9C9F5300C9 /* Pods_RunnerTests.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 5D3A29223035B1390EA5927B /* Pods_RunnerTests.framework */; };
 		A685B5B9A4ED3499EE8C603A /* GoogleService-Info.plist in Resources */ = {isa = PBXBuildFile; fileRef = BBC34E5DDA4AD5C12F8A0CC1 /* GoogleService-Info.plist */; };
 		D02959A30449E4350F8ACB42 /* Pods_Runner.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1C52CE251CC5230C6A34BF42 /* Pods_Runner.framework */; };
@@ -83,6 +84,7 @@
 		DD7A00012044BFA00003C046 /* DirectDropDragTarget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DirectDropDragTarget.swift; sourceTree = "<group>"; };
 		DD7A00032044BFA00003C047 /* PhotosPickerHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotosPickerHandler.swift; sourceTree = "<group>"; };
 		DD7A00052044BFA00003C049 /* WindowFrameStorage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowFrameStorage.swift; sourceTree = "<group>"; };
+		DD7A00072044BFA00003C04A /* DesktopAuxiliaryPanels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesktopAuxiliaryPanels.swift; sourceTree = "<group>"; };
 		33CEB47222A05771004F2AC0 /* Flutter-Debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = "Flutter-Debug.xcconfig"; sourceTree = "<group>"; };
 		33CEB47422A05771004F2AC0 /* Flutter-Release.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = "Flutter-Release.xcconfig"; sourceTree = "<group>"; };
 		33CEB47722A0578A004F2AC0 /* Flutter-Generated.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = "Flutter-Generated.xcconfig"; path = "ephemeral/Flutter-Generated.xcconfig"; sourceTree = "<group>"; };
@@ -189,6 +191,7 @@
 				DD7A00012044BFA00003C046 /* DirectDropDragTarget.swift */,
 				DD7A00032044BFA00003C047 /* PhotosPickerHandler.swift */,
 				DD7A00052044BFA00003C049 /* WindowFrameStorage.swift */,
+				DD7A00072044BFA00003C04A /* DesktopAuxiliaryPanels.swift */,
 				33E51913231747F40026EE4D /* DebugProfile.entitlements */,
 				33E51914231749380026EE4D /* Release.entitlements */,
 				33CC11242044D66E0003C045 /* Resources */,
@@ -472,6 +475,7 @@
 				DD7A00022044BFA00003C046 /* DirectDropDragTarget.swift in Sources */,
 				DD7A00042044BFA00003C047 /* PhotosPickerHandler.swift in Sources */,
 				DD7A00062044BFA00003C049 /* WindowFrameStorage.swift in Sources */,
+				DD7A00082044BFA00003C04A /* DesktopAuxiliaryPanels.swift in Sources */,
 				33CC10F12044A3C60003C045 /* AppDelegate.swift in Sources */,
 				335BBD1B22A9A15E00E9071D /* GeneratedPluginRegistrant.swift in Sources */,
 			);

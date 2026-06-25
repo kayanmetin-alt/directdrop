@@ -70,6 +70,8 @@
 	<string>QR kod okutmak için kamera erişimi gerekir.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Dosya seçmek için fotoğraf kitaplığı erişimi gerekebilir.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Aynı Wi-Fi ağındaki cihazlarla doğrudan, hızlı dosya transferi için yerel ağ erişimi gerekir.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>remote-notification</string>

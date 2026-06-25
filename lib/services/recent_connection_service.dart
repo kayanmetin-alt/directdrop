@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_database/firebase_database.dart';
@@ -11,10 +12,14 @@ import '../providers/transfer_session_controller.dart';
 import '../utils/session_exit_helper.dart';
 import '../utils/user_facing_error.dart';
 import '../utils/session_switch_helper.dart';
+import 'active_session_registry.dart';
 import 'device_identity_service.dart';
 import 'device_registry_service.dart';
+import 'desktop_background_service.dart';
+import 'desktop_overlay_service.dart';
 import 'firebase_auth_service.dart';
 import 'firebase_signaling_service.dart';
+import 'notification_service.dart';
 import 'pair_connect_coordinator.dart';
 import 'paired_auto_connect_service.dart';
 import 'paired_devices_service.dart';
@@ -28,6 +33,9 @@ class RecentConnectionService extends ChangeNotifier {
   static final RecentConnectionService instance = RecentConnectionService._();
 
   static const _inviteMaxAge = Duration(minutes: 5);
+
+  /// Karşı cihaz bildirime dokunup onaylayana kadar bekleme süresi.
+  static const _reconnectWaitTimeout = Duration(minutes: 2);
 
   /// Cihaz saatleri arasındaki fark (özellikle emülatörlerde) yüzünden
   /// karşı cihazın zaman damgası "gelecekte" görünebilir. Bu tolerans olmadan
@@ -88,6 +96,26 @@ class RecentConnectionService extends ChangeNotifier {
     _inflight.remove(peerDeviceId);
     clearIncomingReconnect();
     clearIncomingInvite();
+  }
+
+  /// Aynı cihazdan yeniden bağlanma akışı devam ediyor mu?
+  bool isReconnectFlowActiveFor(String peerDeviceId) =>
+      _approvingReconnectFromId == peerDeviceId ||
+      _incomingReconnectRequest?.fromDeviceId == peerDeviceId;
+
+  Future<void> _supersedeExistingSession(String peerDeviceId) async {
+    final active = ActiveSessionRegistry.instance.activeController;
+    if (active != null &&
+        active.peerDeviceId == peerDeviceId &&
+        !active.isDisposed) {
+      ActiveSessionRegistry.instance.unregister(active);
+      active.markSupersededByReconnect();
+      await active.disconnect(notifyPeer: false);
+    }
+    await PairedAutoConnectService.instance.leavePeer(
+      peerDeviceId,
+      notifyPeer: false,
+    );
   }
 
   Future<void> ensureListening() async {
@@ -354,6 +382,11 @@ class RecentConnectionService extends ChangeNotifier {
       targetDeviceId: myId,
       fromDeviceId: request.fromDeviceId,
     );
+    await _registry.clearPeerDeparted(
+      myDeviceId: myId,
+      fromDeviceId: request.fromDeviceId,
+    );
+    await _supersedeExistingSession(request.fromDeviceId);
 
     await FirebaseAuthService.instance.requireUid();
     await _registerWithTimeout();
@@ -412,15 +445,49 @@ class RecentConnectionService extends ChangeNotifier {
     _incomingReconnectRequest = request;
     notifyListeners();
 
-    final foreground = _isAppInForeground();
+    unawaited(_clearStalePeerDepartedFor(request.fromDeviceId));
 
-    // Ön plandayken yalnızca tam ekran onay ekranı; üstten inen heads-up yok.
-    if (foreground) {
-      onShowReconnectPrompt?.call(request);
+    if (Platform.isMacOS || Platform.isWindows) {
+      final hidden =
+          await DesktopBackgroundService.instance.isMainWindowHidden();
+      if (hidden) {
+        await DesktopOverlayService.instance.showReconnectBanner(request);
+        return;
+      }
+      await DesktopOverlayService.instance.suppressPanelsForVisibleMainWindow();
     }
 
-    // Uygulama arka plandayken FCM push (Cloud Function) bildirimi yeterli;
-    // açılınca tam ekran onay ekranı gösterilir.
+    final foreground = _isAppInForeground();
+
+    // Ana pencere görünürken uygulama içi onay ekranı.
+    if (foreground) {
+      onShowReconnectPrompt?.call(request);
+      return;
+    }
+
+    if (Platform.isMacOS || Platform.isWindows) {
+      await DesktopOverlayService.instance.showReconnectBanner(request);
+      return;
+    }
+
+    // Masaüstünde (FCM yok) arka planda yerel bildirim göster.
+    if (Platform.isMacOS || Platform.isWindows || Platform.isLinux) {
+      unawaited(
+        NotificationService.instance.showReconnectRequestNotification(request),
+      );
+    }
+  }
+
+  Future<void> _clearStalePeerDepartedFor(String fromDeviceId) async {
+    try {
+      final myId = await DeviceIdentityService.instance.getDeviceId();
+      await _registry.clearPeerDeparted(
+        myDeviceId: myId,
+        fromDeviceId: fromDeviceId,
+      );
+    } catch (e) {
+      debugPrint('Bayat ayrılma sinyali temizlenemedi: $e');
+    }
   }
 
   bool _isAppInForeground() {
@@ -478,6 +545,8 @@ class RecentConnectionService extends ChangeNotifier {
   ) async {
     final fromId = snapshot.key;
     if (fromId == null) return;
+
+    if (isReconnectFlowActiveFor(fromId)) return;
 
     final value = snapshot.value;
     if (value is! Map) return;
@@ -580,20 +649,8 @@ class RecentConnectionService extends ChangeNotifier {
       if (lookup != null) return peer;
     }
 
-    final data = await _registry.readDevice(peer.deviceId);
-    if (data != null) {
-      final lastSeen = (data['lastSeen'] as num?)?.toInt();
-      if (data['online'] == true ||
-          (lastSeen != null &&
-              DateTime.now().millisecondsSinceEpoch - lastSeen < 180000)) {
-        return peer;
-      }
-    }
-
-    throw StateError(
-      '${peer.displayName} şu an erişilemiyor. Karşı cihazda uygulamayı açın '
-      've QR kodunu yeniden tarayarak eşleşin.',
-    );
+    // Cihaz çevrimdışı görünse bile devam et — wake/FCM bildirimi gönderilir.
+    return peer;
   }
 
   Future<void> _processExistingInvites(String myId) async {
@@ -748,7 +805,7 @@ class RecentConnectionService extends ChangeNotifier {
       roomCode ??= await _waitForRoomCodeFromPeer(
         peer.deviceId,
         peerDisplayName: peer.displayName,
-        timeout: const Duration(seconds: 90),
+        timeout: _reconnectWaitTimeout,
         onProgress: onProgress,
         minInviteCreatedAtMs: minInviteCreatedAtMs,
         expectedReconnectCreatedAtMs: expectedReconnectCreatedAtMs,
@@ -756,8 +813,9 @@ class RecentConnectionService extends ChangeNotifier {
 
       if (roomCode == null) {
         throw StateError(
-          '${peer.displayName} yanıt vermedi veya onaylamadı. '
-          'Karşı cihazda uygulama açıkken tekrar deneyin.',
+          '${peer.displayName} ${_reconnectWaitTimeout.inMinutes} dakika içinde '
+          'yanıt vermedi. Karşı cihazda bildirime dokunarak uygulamayı açın '
+          've tekrar deneyin.',
         );
       }
 
@@ -884,7 +942,8 @@ class RecentConnectionService extends ChangeNotifier {
     await _invalidateStaleReconnectState(myId, peer.deviceId);
 
     onProgress?.call(
-      '${peer.displayName} cihazına bağlantı isteği gönderildi.',
+      '${peer.displayName} cihazına bildirim gönderildi.\n'
+      'Karşı cihazın daveti kabul etmesi bekleniyor…',
     );
 
     final reconnectCreatedAt = await _registry.sendReconnectRequest(
@@ -894,8 +953,8 @@ class RecentConnectionService extends ChangeNotifier {
     );
 
     onProgress?.call(
-      '${peer.displayName} onayını bekliyor…\n'
-      'Reddederse bu ekranda bilgilendirileceksiniz.',
+      'Bildirim iletildi — ${peer.displayName} onayını bekliyor…\n'
+      '(en fazla ${_reconnectWaitTimeout.inMinutes} dakika)',
     );
 
     // Onay sonrası gelen davet, bu isteğin kimliğiyle eşleşmeli (saat farkından etkilenmez).
@@ -1022,6 +1081,21 @@ class RecentConnectionService extends ChangeNotifier {
 
     final completer = Completer<String?>();
     late final StreamSubscription<DatabaseEvent> sub;
+    Timer? progressTimer;
+    var elapsedSec = 0;
+
+    progressTimer = Timer.periodic(const Duration(seconds: 15), (_) {
+      elapsedSec += 15;
+      final remainingSec = timeout.inSeconds - elapsedSec;
+      if (remainingSec <= 0) return;
+      final min = remainingSec ~/ 60;
+      final sec = remainingSec % 60;
+      final timeLeft = min > 0 ? '$min:${sec.toString().padLeft(2, '0')}' : '${sec}s';
+      onProgress?.call(
+        '$peerDisplayName cihazının daveti kabul etmesi bekleniyor… '
+        '($timeLeft kaldı)',
+      );
+    });
 
     sub = ref.onValue.listen(
       (event) {
@@ -1050,6 +1124,7 @@ class RecentConnectionService extends ChangeNotifier {
     } on FirebaseException catch (e) {
       throw StateError(userFacingMessage(e));
     } finally {
+      progressTimer.cancel();
       await sub.cancel();
     }
   }

@@ -192,30 +192,11 @@ class _RecentConnectScreenState extends State<RecentConnectScreen> {
         ),
         body: SafeArea(
           child: widget.autoAcceptInvite
-              ? Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(24),
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        const CircularProgressIndicator(),
-                        const SizedBox(height: 24),
-                        Text(
-                          '${widget.peer.displayName} ile bağlanılıyor…',
-                          textAlign: TextAlign.center,
-                          style: Theme.of(context).textTheme.titleMedium,
-                        ),
-                        if (_statusMessage != null) ...[
-                          const SizedBox(height: 12),
-                          Text(
-                            _statusMessage!,
-                            textAlign: TextAlign.center,
-                            style: Theme.of(context).textTheme.bodyMedium,
-                          ),
-                        ],
-                      ],
-                    ),
-                  ),
+              ? ConnectWaitingPanel(
+                  peerDisplayName: widget.peer.displayName,
+                  statusMessage: _statusMessage ??
+                      '${widget.peer.displayName} ile bağlanılıyor…',
+                  subtitle: '${widget.peer.displayName} sizi bekliyor…',
                 )
               : ConnectWaitingPanel(
                   peerDisplayName: widget.peer.displayName,
@@ -233,7 +214,8 @@ class _RecentConnectScreenState extends State<RecentConnectScreen> {
         }
 
         if (controller.peerHasLeft ||
-            (controller.hadSuccessfulConnection &&
+            (!controller.isBackgrounded &&
+                controller.hadSuccessfulConnection &&
                 !controller.isConnected &&
                 !controller.isReconnecting &&
                 controller.connectionState == WebRtcConnectionState.failed)) {

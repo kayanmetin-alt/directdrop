@@ -321,7 +321,7 @@ class MainActivity : FlutterActivity() {
         if (publicDownloads != null) {
             return File(publicDownloads, "DirectDrop").apply { mkdirs() }
         }
-        return File(File(filesDir, "app_flutter"), "DirectDrop/Downloads").apply { mkdirs() }
+        return File(File(filesDir, "app_flutter"), "DirectDrop").apply { mkdirs() }
     }
 
     private fun downloadsDirectory(customPath: String? = null): File {

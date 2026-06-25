@@ -20,7 +20,10 @@ class TransferHistoryService extends ChangeNotifier {
   List<TransferHistoryRecord> get records => List.unmodifiable(_records);
 
   List<TransferHistoryRecord> recordsForPeer(String peerDeviceId) {
-    return _records.where((r) => r.peerDeviceId == peerDeviceId).toList();
+    return _records
+        .where((r) => r.peerDeviceId == peerDeviceId)
+        .toList()
+      ..sort((a, b) => b.completedAt.compareTo(a.completedAt));
   }
 
   Future<void> load() async {

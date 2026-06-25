@@ -6,12 +6,18 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 
+import 'package:window_manager/window_manager.dart';
+
 import 'firebase_options.dart';
 import 'screens/home_screen.dart';
 import 'screens/incoming_connect_screen.dart';
 import 'screens/incoming_reconnect_screen.dart';
 import 'screens/recent_connect_screen.dart';
 import 'services/app_version_service.dart';
+import 'services/desktop_background_service.dart';
+import 'services/desktop_overlay_service.dart';
+import 'services/desktop_window_service.dart';
+import 'services/device_identity_service.dart';
 import 'services/device_registry_service.dart';
 import 'services/download_directory_service.dart';
 import 'services/firebase_auth_service.dart';
@@ -30,6 +36,7 @@ import 'utils/directdrop_scroll_behavior.dart';
 import 'widgets/incoming_reconnect_prompt.dart';
 import 'models/reconnect_request.dart';
 import 'models/paired_device.dart';
+import 'providers/transfer_session_controller.dart';
 import 'dev/screenshot_capture.dart';
 
 final GlobalKey<NavigatorState> rootNavigatorKey = GlobalKey<NavigatorState>();
@@ -39,6 +46,11 @@ final ValueNotifier<String?> startupErrorNotifier = ValueNotifier<String?>(null)
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  if (DesktopBackgroundService.isSupported) {
+    await windowManager.ensureInitialized();
+    await DesktopWindowService.configure();
+  }
 
   FlutterError.onError = (details) {
     FlutterError.presentError(details);
@@ -114,6 +126,7 @@ Future<void> _bootstrap() async {
   _wireFirebaseReconnect();
   _wireNotificationWake();
   _wireWakeListener();
+  _wireDesktopOverlay();
   await NotificationService.instance.processInitialMessage();
 
   if (ScreenshotCapture.isEnabled) {
@@ -156,8 +169,13 @@ Future<void> _startBackgroundServices() async {
     await PairedDevicesService.instance.load();
     await TransferHistoryService.instance.load();
     await DownloadDirectoryService.instance.load();
+    await DeviceIdentityService.instance.load();
     if (Platform.isIOS || Platform.isAndroid) {
       await ScreenWakeService.instance.load();
+    }
+    if (DesktopBackgroundService.isSupported) {
+      await DesktopBackgroundService.instance.load();
+      await DesktopBackgroundService.instance.initialize();
     }
     unawaited(PersistentInviteCodeService.instance.getOrCreate());
     await RecentConnectionService.instance.ensureListening();
@@ -168,17 +186,211 @@ Future<void> _startBackgroundServices() async {
   }
 }
 
+void _wireDesktopOverlay() {
+  if (!DesktopOverlayService.isSupported) return;
+
+  final overlay = DesktopOverlayService.instance;
+  overlay.registerActionHandler();
+
+  overlay.onOpenMainApp = () {
+    unawaited(_openMainAppFromTray());
+  };
+
+  overlay.onReconnectApproved = (request) {
+    unawaited(_handleOverlayReconnectApprove(request));
+  };
+
+  overlay.onReconnectRejected = (request) {
+    unawaited(
+      RecentConnectionService.instance.rejectIncomingReconnectRequest(request),
+    );
+  };
+
+  overlay.onFileApproved = (fileId) {
+    unawaited(_handleOverlayFileApproved(fileId));
+  };
+
+  overlay.onFileRejected = (fileId) {
+    unawaited(_handleOverlayFileRejected(fileId));
+  };
+
+  overlay.onAcceptAllFiles = () {
+    unawaited(_handleOverlayAcceptAllFiles());
+  };
+
+  overlay.onRejectAllFiles = () {
+    unawaited(_handleOverlayRejectAllFiles());
+  };
+}
+
+Future<void> _handleOverlayReconnectApprove(ReconnectRequest request) async {
+  final overlay = DesktopOverlayService.instance;
+  await overlay.markReconnectConnecting();
+
+  TransferSessionController? controller;
+  try {
+    controller =
+        await RecentConnectionService.instance.approveReconnectRequest(request);
+  } catch (e, stack) {
+    debugPrint('Overlay reconnect onayı başarısız: $e\n$stack');
+  }
+
+  if (controller == null) {
+    await overlay.hideOverlayToTray();
+    return;
+  }
+
+  ActiveSessionRegistry.instance.register(controller);
+  overlay.enableOverlayOnlySession();
+  overlay.attachReconnectController(controller);
+  overlay.attachOverlaySession(controller);
+
+  // Pencere gizli olsa bile navigator'da bağlantı ekranını aç; pencere açılınca hazır olsun.
+  _presentActiveSessionInMainBody(request, controller);
+}
+
+/// Aktif oturumu ana gövdede bağlantı/transfer ekranında gösterir (pencere gizli olsa bile).
+void _presentActiveSessionInMainBody(
+  ReconnectRequest request,
+  TransferSessionController controller,
+) {
+  void tryPresent() {
+    final nav = rootNavigatorKey.currentState;
+    if (nav == null) return;
+    if (nav.canPop()) return;
+
+    _openIncomingReconnect(
+      request,
+      existingController: controller,
+    );
+  }
+
+  tryPresent();
+  if (rootNavigatorKey.currentState?.canPop() != true) {
+    WidgetsBinding.instance.addPostFrameCallback((_) => tryPresent());
+  }
+}
+
+Future<void> _openMainAppFromTray() async {
+  final controller = ActiveSessionRegistry.instance.activeController;
+
+  await DesktopBackgroundService.instance.showMainWindow(force: true);
+
+  if (controller == null || controller.isDisposed) return;
+  final peerId = controller.peerDeviceId;
+  if (peerId == null) return;
+
+  _presentActiveSessionInMainBody(
+    ReconnectRequest(
+      fromDeviceId: peerId,
+      fromDeviceName: controller.peerDisplayName ?? 'Cihaz',
+      clientCreatedAt: DateTime.now().millisecondsSinceEpoch,
+    ),
+    controller,
+  );
+}
+
+Future<void> _handleOverlayFileApproved(String fileId) async {
+  final overlay = DesktopOverlayService.instance;
+  await overlay.markFileResolved(fileId, approved: true);
+
+  final controller = ActiveSessionRegistry.instance.activeController;
+  unawaited(
+    controller?.acceptIncomingFile(fileId).then((_) => _syncOverlayFilesBanner()),
+  );
+}
+
+Future<void> _handleOverlayFileRejected(String fileId) async {
+  final overlay = DesktopOverlayService.instance;
+  await overlay.markFileResolved(fileId, approved: false);
+
+  final controller = ActiveSessionRegistry.instance.activeController;
+  unawaited(
+    controller?.rejectIncomingFile(fileId).then((_) => _syncOverlayFilesBanner()),
+  );
+}
+
+Future<void> _handleOverlayAcceptAllFiles() async {
+  final overlay = DesktopOverlayService.instance;
+  await overlay.markAllFilesApproved();
+
+  final controller = ActiveSessionRegistry.instance.activeController;
+  unawaited(
+    controller?.acceptAllIncomingFiles().then((_) => _syncOverlayFilesBanner()),
+  );
+}
+
+Future<void> _handleOverlayRejectAllFiles() async {
+  final overlay = DesktopOverlayService.instance;
+  await overlay.markAllFilesRejected();
+
+  final controller = ActiveSessionRegistry.instance.activeController;
+  await controller?.rejectAllIncomingFiles();
+  await _syncOverlayFilesBanner();
+}
+
+Future<void> _syncOverlayFilesBanner() async {
+  if (!await DesktopBackgroundService.instance.isMainWindowHidden()) return;
+
+  final controller = ActiveSessionRegistry.instance.activeController;
+  final awaiting = controller?.awaitingApprovalFiles ?? const [];
+  final overlay = DesktopOverlayService.instance;
+
+  if (awaiting.isEmpty) {
+    final items = controller?.fileTransfer?.items ?? const [];
+    await overlay.onTransferItemsChanged(items);
+    return;
+  }
+
+  await overlay.showIncomingFilesBanner(
+    peerName: controller?.peerDisplayName ?? 'Cihaz',
+    files: awaiting,
+  );
+}
+
+Future<void> _handOffPendingRequestsToOverlay() async {
+  if (!DesktopBackgroundService.isSupported) return;
+  if (!await DesktopBackgroundService.instance.isMainWindowHidden()) return;
+
+  final pending = RecentConnectionService.instance.incomingReconnectRequest;
+  if (pending != null) {
+    await DesktopOverlayService.instance.showReconnectBanner(pending);
+  }
+
+  final controller = ActiveSessionRegistry.instance.activeController;
+  if (controller == null) return;
+
+  final awaiting = controller.awaitingApprovalFiles;
+  if (awaiting.isNotEmpty) {
+    await DesktopOverlayService.instance.showIncomingFilesBanner(
+      peerName: controller.peerDisplayName ?? 'Cihaz',
+      files: awaiting,
+    );
+    return;
+  }
+
+  final items = controller.fileTransfer?.items ?? const [];
+  if (items.isNotEmpty) {
+    await DesktopOverlayService.instance.onTransferItemsChanged(items);
+  }
+}
+
 void _wireNotificationWake() {
   NotificationService.instance.onWakeNotificationTapped = (request) {
     if (request.type == WakeRequestType.reconnect) return;
-    _openIncomingConnect(request);
+    unawaited(_openIncomingConnect(request));
+  };
+
+  // Masaüstünde menü çubuğundayken gelen dosya bildirimine dokununca pencereyi aç.
+  NotificationService.instance.onIncomingFilesTapped = () {
+    unawaited(DesktopBackgroundService.instance.showMainWindow());
   };
 }
 
 void _wireWakeListener() {
   WakeListenerService.instance.setHandler((request) {
     if (request.type == WakeRequestType.reconnect) return;
-    _openIncomingConnect(request);
+    unawaited(_openIncomingConnect(request));
   });
 }
 
@@ -222,6 +434,7 @@ void _openIncomingReconnect(
   ReconnectRequest request, {
   PairedDevice? peer,
   bool autoApprove = false,
+  TransferSessionController? existingController,
 }) {
   final nav = rootNavigatorKey.currentState;
   if (nav == null) return;
@@ -232,12 +445,16 @@ void _openIncomingReconnect(
         request: request,
         peer: peer,
         autoApprove: autoApprove,
+        existingController: existingController,
       ),
     ),
   );
 }
 
-void _openIncomingConnect(WakeRequest request) {
+Future<void> _openIncomingConnect(WakeRequest request) async {
+  if (DesktopBackgroundService.isSupported) {
+    await DesktopBackgroundService.instance.showMainWindow();
+  }
   final nav = rootNavigatorKey.currentState;
   if (nav == null) return;
   nav.push(
@@ -260,6 +477,58 @@ void _wireAutoReconnect() {
       ),
     );
   };
+
+  if (DesktopBackgroundService.isSupported) {
+    DesktopBackgroundService.instance.onShowMainApp = () async {
+      await _openMainAppFromTray();
+    };
+    DesktopBackgroundService.instance.onMainWindowShown = () {
+      IncomingReconnectPrompt.retryPendingIfAny();
+    };
+    DesktopBackgroundService.instance.onMainWindowHidden = () async {
+      await _handOffPendingRequestsToOverlay();
+    };
+    // Menü çubuğu menüsünden cihaz seçilince: pencereyi aç + bağlantıyı başlat.
+    DesktopBackgroundService.instance.onConnectToPeer = (peer) {
+      unawaited(_connectToPeerFromTray(peer));
+    };
+    // Menüden gelen eşleşmeyi onaylayınca: pencereyi aç + gelen istek ekranını göster.
+    DesktopBackgroundService.instance.onApproveReconnect = (request) {
+      unawaited(_handleOverlayReconnectApprove(request));
+    };
+  }
+}
+
+Future<void> _connectToPeerFromTray(PairedDevice peer) async {
+  await DesktopBackgroundService.instance.showMainWindow();
+  final nav = rootNavigatorKey.currentState;
+  if (nav == null) return;
+  nav.push(
+    MaterialPageRoute<void>(
+      builder: (_) => RecentConnectScreen(peer: peer),
+    ),
+  );
+}
+
+Future<void> _maybePresentActiveSessionOnResume() async {
+  if (!DesktopBackgroundService.isSupported) return;
+
+  final controller = ActiveSessionRegistry.instance.activeController;
+  if (controller == null || controller.isDisposed) return;
+  if (!controller.isConnected) return;
+  if (await DesktopBackgroundService.instance.isMainWindowHidden()) return;
+
+  final peerId = controller.peerDeviceId;
+  if (peerId == null) return;
+
+  _presentActiveSessionInMainBody(
+    ReconnectRequest(
+      fromDeviceId: peerId,
+      fromDeviceName: controller.peerDisplayName ?? 'Cihaz',
+      clientCreatedAt: DateTime.now().millisecondsSinceEpoch,
+    ),
+    controller,
+  );
 }
 
 class DirectDropApp extends StatefulWidget {
@@ -275,7 +544,14 @@ class _DirectDropAppState extends State<DirectDropApp> with WidgetsBindingObserv
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _retryReconnectPrompt();
+      unawaited(() async {
+        if (DesktopBackgroundService.isSupported &&
+            !await DesktopBackgroundService.instance.isMainWindowHidden()) {
+          await DesktopOverlayService.instance
+              .suppressPanelsForVisibleMainWindow();
+        }
+        _retryReconnectPrompt();
+      }());
     });
   }
 
@@ -286,6 +562,20 @@ class _DirectDropAppState extends State<DirectDropApp> with WidgetsBindingObserv
   }
 
   void _retryReconnectPrompt() {
+    final pending = RecentConnectionService.instance.incomingReconnectRequest;
+    if (pending == null) return;
+
+    if (DesktopBackgroundService.isSupported) {
+      unawaited(() async {
+        if (await DesktopBackgroundService.instance.isMainWindowHidden()) {
+          await DesktopOverlayService.instance.showReconnectBanner(pending);
+          return;
+        }
+        await DesktopOverlayService.instance.suppressPanelsForVisibleMainWindow();
+        IncomingReconnectPrompt.retryPendingIfAny();
+      }());
+      return;
+    }
     IncomingReconnectPrompt.retryPendingIfAny();
   }
 
@@ -305,6 +595,7 @@ class _DirectDropAppState extends State<DirectDropApp> with WidgetsBindingObserv
       unawaited(WakeListenerService.instance.ensureRunning());
       _retryReconnectPrompt();
       activeController?.onAppResumed();
+      unawaited(_maybePresentActiveSessionOnResume());
       return;
     }
 
@@ -313,16 +604,26 @@ class _DirectDropAppState extends State<DirectDropApp> with WidgetsBindingObserv
         state == AppLifecycleState.hidden) {
       activeController?.markBackgrounded();
       if (state == AppLifecycleState.paused && !hasActiveSession) {
-        unawaited(SessionCleanupService.instance.markGracefulShutdown());
+        if (!DesktopBackgroundService.instance.shouldSkipGracefulShutdownOnPause()) {
+          unawaited(SessionCleanupService.instance.markGracefulShutdown());
+        }
       }
       return;
     }
 
     if (state == AppLifecycleState.detached) {
-      if (hasActiveSession && Platform.isAndroid) {
+      if (DesktopBackgroundService.instance.isQuitting) {
+        RecentConnectionService.instance.stopListening();
+        unawaited(ActiveSessionRegistry.instance.disconnectActive());
+        unawaited(SessionCleanupService.instance.markGracefulShutdown());
+        return;
+      }
+      if (hasActiveSession && (Platform.isAndroid || Platform.isIOS)) {
+        unawaited(activeController?.flushTransferCheckpoints());
         activeController?.markBackgrounded();
         return;
       }
+      unawaited(activeController?.flushTransferCheckpoints());
       RecentConnectionService.instance.stopListening();
       unawaited(ActiveSessionRegistry.instance.disconnectActive());
       unawaited(SessionCleanupService.instance.markGracefulShutdown());
