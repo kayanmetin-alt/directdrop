@@ -36,6 +36,7 @@ import 'services/wake_listener_service.dart';
 import 'utils/directdrop_scroll_behavior.dart';
 import 'utils/user_facing_error.dart';
 import 'widgets/incoming_reconnect_prompt.dart';
+import 'widgets/windows_overlay_panels.dart';
 import 'models/reconnect_request.dart';
 import 'models/paired_device.dart';
 import 'providers/transfer_session_controller.dart';
@@ -705,6 +706,17 @@ class _DirectDropAppState extends State<DirectDropApp> with WidgetsBindingObserv
         colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF2563EB)),
         useMaterial3: true,
       ),
+      builder: (context, child) {
+        if (!Platform.isWindows || child == null) return child ?? const SizedBox.shrink();
+        // Windows sağ köşe panelleri: pencere küçültülmüş panel modundayken üstte çizilir.
+        return Stack(
+          fit: StackFit.expand,
+          children: [
+            child,
+            const WindowsOverlayHost(),
+          ],
+        );
+      },
       home: ValueListenableBuilder<String?>(
         valueListenable: startupErrorNotifier,
         builder: (context, error, _) {

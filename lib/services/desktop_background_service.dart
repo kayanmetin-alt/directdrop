@@ -105,7 +105,11 @@ class DesktopBackgroundService extends ChangeNotifier
           : 'assets/tray_icon_template.png';
       isTemplate = true;
     } else {
-      iconAsset = 'assets/tray_icon.png';
+      // Windows template/adaptif ikon desteklemez; bu yüzden iki renkli varyant
+      // kullanırız: bağlıyken mavi (tray_icon.png), bağlı değilken gri (idle).
+      iconAsset = _connectionActive
+          ? 'assets/tray_icon.png'
+          : 'assets/tray_icon_idle.png';
       isTemplate = false;
     }
     try {
