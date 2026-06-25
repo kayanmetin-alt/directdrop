@@ -199,6 +199,7 @@ class _OverlayPanel extends StatelessWidget {
     final title = f['title'] as String? ?? '';
     final subtitle = f['subtitle'] as String? ?? '';
     final showBulk = f['showBulkActions'] == true;
+    final showOpen = f['showOpenAction'] == true;
     final items = ((f['items'] as List?) ?? const [])
         .map((e) => (e as Map).cast<String, dynamic>())
         .toList();
@@ -267,6 +268,14 @@ class _OverlayPanel extends StatelessWidget {
                   ),
                 ),
               ],
+            ),
+          ],
+          if (showOpen) ...[
+            const SizedBox(height: 10),
+            _PanelButton(
+              label: 'Dosyaları aç',
+              prominent: true,
+              onTap: () => _service.handlePanelAction('files_open', const {}),
             ),
           ],
         ],

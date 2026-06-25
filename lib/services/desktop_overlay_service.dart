@@ -8,6 +8,7 @@ import '../models/desktop_banner_entry.dart';
 import '../models/reconnect_request.dart';
 import '../models/transfer_file.dart';
 import '../providers/transfer_session_controller.dart';
+import '../utils/file_location_opener.dart';
 import 'active_session_registry.dart';
 import 'desktop_background_service.dart';
 import 'desktop_window_service.dart';
@@ -24,6 +25,7 @@ class _PanelFileRow {
     required this.phase,
     this.progress = 0,
     this.status = '',
+    this.localPath,
   });
 
   final String id;
@@ -31,6 +33,9 @@ class _PanelFileRow {
   _PanelFilePhase phase;
   double progress;
   String status;
+
+  /// Alınan dosyanın diskteki yolu (tamamlandığında "Dosyaları aç" için).
+  String? localPath;
 }
 
 /// Reconnect panelinin gösterdiği aşama.
@@ -96,6 +101,20 @@ class DesktopOverlayService extends ChangeNotifier {
 
   DateTime? _lastProgressSync;
   Timer? _progressSyncDebounce;
+
+  /// Aynı bağlantı isteği için bildirim sesinin tekrar tekrar çalmasını önler.
+  String? _lastSoundedReconnectId;
+
+  /// Arka planda istek panelini açarken kısa bir bildirim sesi çalar.
+  Future<void> _playRequestSound() async {
+    if (_usesNativePanels) {
+      try {
+        await _channel.invokeMethod<void>('playSound');
+      } catch (_) {}
+    } else if (_usesWindowPanels) {
+      unawaited(SystemSound.play(SystemSoundType.alert));
+    }
+  }
 
   void Function(ReconnectRequest request)? onReconnectApproved;
   void Function(ReconnectRequest request)? onReconnectRejected;
@@ -239,6 +258,10 @@ class DesktopOverlayService extends ChangeNotifier {
     _detachReconnectController();
 
     final id = 'reconnect_${request.fromDeviceId}_${request.clientCreatedAt}';
+    if (_lastSoundedReconnectId != id) {
+      _lastSoundedReconnectId = id;
+      unawaited(_playRequestSound());
+    }
     banners.removeWhere((b) => b.kind == DesktopBannerKind.reconnect);
     banners.insert(
       0,
@@ -386,6 +409,7 @@ class DesktopOverlayService extends ChangeNotifier {
     if (!await _shouldShowCornerPanels()) return;
 
     _filesPanelPeerName = peerName;
+    var addedNew = false;
     for (final f in files) {
       if (_rejectedFileIds.contains(f.id)) continue;
       if (_approvedPendingIds.contains(f.id)) continue;
@@ -394,11 +418,16 @@ class DesktopOverlayService extends ChangeNotifier {
           existing.phase != _PanelFilePhase.pending) {
         continue;
       }
+      if (existing == null) addedNew = true;
       _panelFiles[f.id] = _PanelFileRow(
         id: f.id,
         name: f.name,
         phase: _PanelFilePhase.pending,
       );
+    }
+
+    if (addedNew) {
+      unawaited(_playRequestSound());
     }
 
     _filesPanelAutoHideTimer?.cancel();
@@ -536,6 +565,7 @@ class DesktopOverlayService extends ChangeNotifier {
           phase: _PanelFilePhase.transferring,
           progress: item.progress.clamp(0.0, 1.0),
           status: _statusLabel(item.status),
+          localPath: item.localPath,
         );
         continue;
       }
@@ -548,6 +578,7 @@ class DesktopOverlayService extends ChangeNotifier {
           phase: _PanelFilePhase.completed,
           progress: 1,
           status: 'Tamamlandı',
+          localPath: item.localPath,
         );
       }
     }
@@ -562,6 +593,19 @@ class DesktopOverlayService extends ChangeNotifier {
       (r) => r.phase == _PanelFilePhase.transferring,
     );
     if (hasPending || hasActive) {
+      _filesPanelAutoHideTimer?.cancel();
+      return;
+    }
+
+    // Tümü tamamlandı. Alınan (gelen) dosya varsa paneli otomatik kapatma:
+    // kullanıcı "Dosyaları aç" ile açabilsin ya da X ile kendisi kapatsın.
+    // Yalnızca giden transferde eski davranış (kısa süre sonra gizle) sürer.
+    final hasReceivedCompleted = _panelFiles.values.any(
+      (r) =>
+          r.phase == _PanelFilePhase.completed &&
+          (r.localPath?.isNotEmpty ?? false),
+    );
+    if (hasReceivedCompleted) {
       _filesPanelAutoHideTimer?.cancel();
       return;
     }
@@ -720,6 +764,16 @@ class DesktopOverlayService extends ChangeNotifier {
       final rows = _panelFiles.values.toList();
       final pendingCount =
           rows.where((r) => r.phase == _PanelFilePhase.pending).length;
+      final activeCount =
+          rows.where((r) => r.phase == _PanelFilePhase.transferring).length;
+      final completedReceivedCount = rows
+          .where((r) =>
+              r.phase == _PanelFilePhase.completed &&
+              (r.localPath?.isNotEmpty ?? false))
+          .length;
+      // Tümü bitti ve elimizde alınan dosya var → "Dosyaları aç" göster.
+      final showOpenAction =
+          pendingCount == 0 && activeCount == 0 && completedReceivedCount > 0;
       final peer = _filesPanelPeerName ?? _controller?.peerDisplayName ?? 'Cihaz';
 
       final String title;
@@ -727,6 +781,11 @@ class DesktopOverlayService extends ChangeNotifier {
       if (pendingCount > 0) {
         title = '$peer dosya göndermek istiyor';
         subtitle = '$pendingCount dosya onay bekliyor';
+      } else if (showOpenAction) {
+        title = 'Transfer tamamlandı';
+        subtitle = completedReceivedCount == 1
+            ? '1 dosya alındı'
+            : '$completedReceivedCount dosya alındı';
       } else if (_outgoingPanelActive) {
         title = '$peer cihazına gönderiliyor';
         subtitle = '${rows.length} dosya';
@@ -739,6 +798,7 @@ class DesktopOverlayService extends ChangeNotifier {
         'title': title,
         'subtitle': subtitle,
         'showBulkActions': pendingCount > 0,
+        'showOpenAction': showOpenAction,
         'items': [
           for (final row in rows.take(8))
             {
@@ -800,6 +860,7 @@ class DesktopOverlayService extends ChangeNotifier {
     if (files != null) {
       h += 48; // dosya başlığı
       if (files['showBulkActions'] == true) h += 46; // toplu butonlar
+      if (files['showOpenAction'] == true) h += 46; // "Dosyaları aç" butonu
       final items = (files['items'] as List?) ?? const [];
       h += items.length * 48;
       h += 8;
@@ -928,10 +989,31 @@ class DesktopOverlayService extends ChangeNotifier {
         onAcceptAllFiles?.call();
       case 'files_reject_all':
         onRejectAllFiles?.call();
+      case 'files_open':
+        await _openReceivedFiles();
       case 'open_main':
         onOpenMainApp?.call();
       case 'panel_dismiss':
         await dismissPanelsUiOnly();
+    }
+  }
+
+  /// Panelde tamamlanan alınan dosyaları açar/gösterir. Tek dosyada dosyayı
+  /// dosya yöneticisinde seçili gösterir; birden çoksa indirme klasörünü açar.
+  /// Panel açık kalır; kullanıcı X ile kapatır.
+  Future<void> _openReceivedFiles() async {
+    final paths = _panelFiles.values
+        .where((r) =>
+            r.phase == _PanelFilePhase.completed &&
+            (r.localPath?.isNotEmpty ?? false))
+        .map((r) => r.localPath!)
+        .toList();
+    if (paths.isEmpty) return;
+
+    if (paths.length == 1) {
+      await FileLocationOpener.revealSavedFile(paths.first);
+    } else {
+      await FileLocationOpener.openDownloadsFolder(File(paths.first).parent.path);
     }
   }
 }

@@ -29,6 +29,9 @@ final class DesktopAuxiliaryPanels {
       case "hideAll":
         self.hideAll()
         result(nil)
+      case "playSound":
+        Self.playRequestSound()
+        result(nil)
       default:
         result(FlutterMethodNotImplemented)
       }
@@ -95,6 +98,16 @@ final class DesktopAuxiliaryPanels {
     var args = payload
     args["action"] = action
     actionChannel?.invokeMethod("onAction", arguments: args)
+  }
+
+  /// Sağ köşe paneli arka planda bir istekle açıldığında kısa bir bildirim sesi
+  /// çalar (uygulama gizliyken kullanıcının fark etmesi için).
+  static func playRequestSound() {
+    if let sound = NSSound(named: NSSound.Name("Glass")) {
+      sound.play()
+    } else {
+      NSSound.beep()
+    }
   }
 }
 
@@ -405,13 +418,14 @@ private final class AuxiliaryPanel: NSPanel {
 
     let files = data["items"] as? [[String: Any]] ?? []
     let showBulk = data["showBulkActions"] as? Bool ?? !files.isEmpty
+    let showOpen = data["showOpenAction"] as? Bool ?? false
     let shown = Array(files.prefix(8))
 
     let signature = shown.map { file -> String in
       let id = file["id"] as? String ?? ""
       let phase = file["phase"] as? String ?? "pending"
       return "\(id):\(phase)"
-    }.joined(separator: "|") + ";bulk=\(showBulk)"
+    }.joined(separator: "|") + ";bulk=\(showBulk);open=\(showOpen)"
 
     // Yapı aynı → yalnızca ilerleme çubuklarını güncelle, paneli yeniden kurma.
     if signature == renderedFileSignature && !shown.isEmpty {
@@ -451,8 +465,9 @@ private final class AuxiliaryPanel: NSPanel {
       if index < shown.count - 1 { listHeight += Self.kRowSpacing }
     }
 
-    buttonBar.isHidden = !showBulk
+    buttonBar.isHidden = !(showBulk || showOpen)
     if showBulk {
+      buttonBar.distribution = .fill
       addButton("Tümünü reddet", style: .plain) { [weak self] in
         self?.actionHandler?("files_reject_all", [:])
       }
@@ -460,12 +475,19 @@ private final class AuxiliaryPanel: NSPanel {
       addButton("Tümünü onayla", style: .prominent) { [weak self] in
         self?.actionHandler?("files_accept_all", [:])
       }
+    } else if showOpen {
+      // Transfer bitti: paneli otomatik kapatmak yerine dosyaları açma seçeneği
+      // sun; kullanıcı dilerse sağ üstteki X ile kapatır.
+      buttonBar.distribution = .fillEqually
+      addButton("Dosyaları aç", style: .prominent) { [weak self] in
+        self?.actionHandler?("files_open", [:])
+      }
     }
 
     // Üst boşluk(14) + başlık(20) + altyazı(16) + stack aralıkları(8*2) + alt boşluk(14)
     var height: CGFloat = 14 + 20 + 16 + 8 + 14
     if !shown.isEmpty { height += listHeight + 8 }
-    if showBulk { height += 32 + 8 }
+    if showBulk || showOpen { height += 34 + 8 }
     applyPanelSize(height: min(height, 540))
     return true
   }
@@ -527,30 +549,37 @@ private final class AuxiliaryPanel: NSPanel {
     action: @escaping () -> Void
   ) {
     let button = NSButton(title: title, target: nil, action: nil)
-    button.bezelStyle = .rounded
-    if large {
-      button.controlSize = .large
-      button.translatesAutoresizingMaskIntoConstraints = false
-      button.heightAnchor.constraint(equalToConstant: 34).isActive = true
-    }
+    button.translatesAutoresizingMaskIntoConstraints = false
+    if large { button.controlSize = .large }
+    let height: CGFloat = large ? 34 : 28
+    button.heightAnchor.constraint(equalToConstant: height).isActive = true
+    let fontSize: CGFloat = large ? 14 : 13
+
     if style == .prominent {
+      // Nonactivating panel'de varsayılan buton (.rounded + bezelColor) accent
+      // dolgusunu güvenilir göstermiyor; içi beyaz kalıp pasif görünüyordu.
+      // Bu yüzden katman destekli düz (dolu) accent buton çiziyoruz.
+      button.isBordered = false
+      button.bezelStyle = .regularSquare
+      button.wantsLayer = true
+      button.layer?.backgroundColor = NSColor.controlAccentColor.cgColor
+      button.layer?.cornerRadius = large ? 9 : 7
+      button.layer?.masksToBounds = true
+      button.contentTintColor = .white
       button.keyEquivalent = "\r"
-      // Pencere key olmadığı için (nonactivating panel) varsayılan buton mavi
-      // dolgusunu almaz; accent rengini ve beyaz metni elle ver.
-      button.bezelColor = .controlAccentColor
       button.attributedTitle = NSAttributedString(
         string: title,
         attributes: [
           .foregroundColor: NSColor.white,
-          .font: NSFont.systemFont(
-            ofSize: large ? 14 : 13, weight: .semibold),
+          .font: NSFont.systemFont(ofSize: fontSize, weight: .semibold),
         ]
       )
-    } else if large {
+    } else {
+      button.bezelStyle = .rounded
       button.attributedTitle = NSAttributedString(
         string: title,
         attributes: [
-          .font: NSFont.systemFont(ofSize: 14, weight: .regular),
+          .font: NSFont.systemFont(ofSize: fontSize, weight: .regular),
         ]
       )
     }
