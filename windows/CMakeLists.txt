@@ -32,6 +32,13 @@ set(CMAKE_CXX_FLAGS_PROFILE "${CMAKE_CXX_FLAGS_RELEASE}")
 # Use Unicode for all projects.
 add_definitions(-DUNICODE -D_UNICODE)
 
+# Newer MSVC toolchains hard-error (STL1011) on <experimental/coroutine>, which
+# some plugins still include (e.g. flutter_local_notifications_windows). These
+# plugin targets do not use APPLY_STANDARD_SETTINGS, so define the silence flag
+# globally — it must precede the add_subdirectory / plugin includes below to
+# propagate to every plugin target.
+add_compile_definitions(_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS)
+
 # Compilation settings that should be applied to most targets.
 #
 # Be cautious about adding new options here, as plugins use this function by
