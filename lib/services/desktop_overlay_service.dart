@@ -13,7 +13,6 @@ import 'active_session_registry.dart';
 import 'desktop_background_service.dart';
 import 'desktop_window_service.dart';
 import 'webrtc_service.dart';
-import 'windows_overlay_window.dart';
 
 /// Dosya panelindeki satır durumu.
 enum _PanelFilePhase { pending, transferring, completed }
@@ -48,20 +47,14 @@ class DesktopOverlayService extends ChangeNotifier {
 
   static const _channel = MethodChannel('com.directdrop.app/overlay');
 
-  static bool get isSupported => Platform.isWindows || Platform.isMacOS;
+  /// Köşe panelleri yalnızca macOS'ta (native AppKit NSPanel) desteklenir.
+  /// Windows normal pencere uygulaması gibi davranır; panel kullanmaz.
+  static bool get isSupported => Platform.isMacOS;
 
   /// macOS: native AppKit NSPanel'ler (DesktopAuxiliaryPanels.swift).
   static bool get _usesNativePanels => Platform.isMacOS;
 
-  /// Windows: ana pencereyi küçük bir köşe paneline dönüştürüp Flutter ile çiziyoruz.
-  static bool get _usesWindowPanels => Platform.isWindows;
-
   final List<DesktopBannerEntry> banners = [];
-
-  /// Windows köşe panelinin Flutter tarafında çizilecek anlık içeriği.
-  /// macOS native paneline gönderilen payload ile aynı yapıdadır.
-  final ValueNotifier<Map<String, dynamic>?> windowPanelData =
-      ValueNotifier<Map<String, dynamic>?>(null);
 
   ReconnectPanelPhase _reconnectPhase = ReconnectPanelPhase.prompt;
   TransferSessionController? _reconnectController;
@@ -111,8 +104,6 @@ class DesktopOverlayService extends ChangeNotifier {
       try {
         await _channel.invokeMethod<void>('playSound');
       } catch (_) {}
-    } else if (_usesWindowPanels) {
-      unawaited(SystemSound.play(SystemSoundType.alert));
     }
   }
 
@@ -209,16 +200,11 @@ class DesktopOverlayService extends ChangeNotifier {
     }
   }
 
-  /// Sağ köşe panelleri (macOS native / Windows Flutter) yalnızca ana pencere
-  /// gizliyken kullanılır.
-  ///
-  /// Windows'ta panel, ana pencerenin küçültülmüş hâli olduğundan panel açıkken
-  /// `isMainWindowHidden()` false döner; bu yüzden panel aktifken veya arka plan
-  /// (overlay-only) oturumu sürerken de arka plan modunda kabul edilir.
+  /// macOS native köşe panelleri yalnızca ana pencere menü çubuğuna gizliyken
+  /// (veya overlay-only oturum sürerken) kullanılır.
   static Future<bool> _shouldShowCornerPanels() async {
     if (!isSupported) return false;
     if (instance._overlayOnlySession) return true;
-    if (_usesWindowPanels && WindowsOverlayWindow.instance.isActive) return true;
     return DesktopBackgroundService.instance.isMainWindowHidden();
   }
 
@@ -826,14 +812,6 @@ class DesktopOverlayService extends ChangeNotifier {
       if (filesPayload != null) 'files': filesPayload,
     };
 
-    if (_usesWindowPanels) {
-      windowPanelData.value = payload;
-      await WindowsOverlayWindow.instance.show(
-        _estimatePanelHeight(reconnectPayload, filesPayload),
-      );
-      return;
-    }
-
     if (!_usesNativePanels) return;
 
     try {
@@ -841,31 +819,6 @@ class DesktopOverlayService extends ChangeNotifier {
     } catch (e, stack) {
       debugPrint('Yardımcı panel senkronu başarısız: $e\n$stack');
     }
-  }
-
-  /// Windows köşe penceresinin yüksekliğini içeriğe göre tahmin eder.
-  /// Değerler [WindowsOverlayPanels] yerleşimiyle uyumlu tutulmalıdır.
-  double _estimatePanelHeight(
-    Map<String, dynamic>? reconnect,
-    Map<String, dynamic>? files,
-  ) {
-    double h = 24; // dış dikey boşluk
-    if (reconnect != null) {
-      h += 70; // avatar + başlık + alt başlık bloğu
-      if ((reconnect['phase'] as String? ?? 'prompt') == 'prompt') {
-        h += 52; // onay/ret butonları
-      }
-    }
-    if (reconnect != null && files != null) h += 16; // ayraç + boşluk
-    if (files != null) {
-      h += 48; // dosya başlığı
-      if (files['showBulkActions'] == true) h += 46; // toplu butonlar
-      if (files['showOpenAction'] == true) h += 46; // "Dosyaları aç" butonu
-      final items = (files['items'] as List?) ?? const [];
-      h += items.length * 48;
-      h += 8;
-    }
-    return h.clamp(96.0, 640.0);
   }
 
   String _reconnectTitle(DesktopBannerEntry banner) {
@@ -904,11 +857,6 @@ class DesktopOverlayService extends ChangeNotifier {
   }
 
   Future<void> _hideAllPanels() async {
-    if (_usesWindowPanels) {
-      windowPanelData.value = null;
-      await WindowsOverlayWindow.instance.hide();
-      return;
-    }
     if (!_usesNativePanels) return;
     try {
       await _channel.invokeMethod<void>('hideAll');
@@ -953,8 +901,7 @@ class DesktopOverlayService extends ChangeNotifier {
     await handlePanelAction(args['action'] as String? ?? '', args);
   }
 
-  /// Köşe panelinden gelen aksiyonları işler. macOS native panel kanalı ve
-  /// Windows Flutter paneli ([WindowsOverlayPanels]) aynı dağıtımı kullanır.
+  /// macOS native köşe panelinden gelen aksiyonları işler.
   Future<void> handlePanelAction(
     String action,
     Map<String, dynamic> args,

@@ -30,7 +30,9 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   if (!window.Create(L"DirectDrop", origin, size)) {
     return EXIT_FAILURE;
   }
-  window.SetQuitOnClose(false);
+  // DirectDrop Windows'ta normal bir masaüstü uygulamasıdır: pencere kapatılınca
+  // uygulama kapanır (tepsi simgesi / arka plan modu yoktur).
+  window.SetQuitOnClose(true);
 
   ::MSG msg;
   while (::GetMessage(&msg, nullptr, 0, 0)) {

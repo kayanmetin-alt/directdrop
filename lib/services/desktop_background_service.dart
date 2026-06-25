@@ -43,11 +43,14 @@ class DesktopBackgroundService extends ChangeNotifier
   void Function()? onMainWindowShown;
   Future<void> Function()? onMainWindowHidden;
 
-  static bool get isSupported => Platform.isWindows || Platform.isMacOS;
+  /// Menü çubuğu / tepsi simgesi ve pencereyi arka planda tutma davranışı
+  /// yalnızca macOS'ta kullanılır. Windows normal bir masaüstü uygulaması gibi
+  /// davranır: pencere kapatılınca uygulama kapanır, tepsi simgesi yoktur.
+  static bool get isSupported => Platform.isMacOS;
 
   bool get isQuitting => _isQuitting;
 
-  /// Masaüstünde her zaman menü çubuğu / bildirim alanında çalışır.
+  /// macOS'ta her zaman menü çubuğunda arka planda çalışır.
   bool get keepsRunningInBackground => isSupported;
 
   Future<void> load() async {

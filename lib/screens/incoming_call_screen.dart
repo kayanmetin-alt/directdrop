@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:window_manager/window_manager.dart';
 
 import '../models/reconnect_request.dart';
 import '../services/desktop_background_service.dart';
@@ -324,6 +325,16 @@ class _LinkPulseIndicator extends StatelessWidget {
 
 /// Masaüstünde uygulama penceresini öne getirir.
 Future<void> activateAppWindowForCall() async {
-  if (!Platform.isMacOS && !Platform.isWindows) return;
-  await DesktopBackgroundService.instance.showMainWindow();
+  if (Platform.isMacOS) {
+    // macOS: menü çubuğuna gizliyse pencereyi geri getirir.
+    await DesktopBackgroundService.instance.showMainWindow();
+    return;
+  }
+  if (Platform.isWindows) {
+    // Windows normal pencere uygulaması: simge durumundaysa öne getir.
+    try {
+      await windowManager.show();
+      await windowManager.focus();
+    } catch (_) {}
+  }
 }

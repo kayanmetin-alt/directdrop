@@ -18,6 +18,7 @@ Thumbs.db
 
 # Windows installer output
 dist/
+store/releases/
 windows/installer/version.iss
 
 # Bundled at build time from Microsoft CDN

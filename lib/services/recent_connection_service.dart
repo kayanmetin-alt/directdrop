@@ -447,7 +447,8 @@ class RecentConnectionService extends ChangeNotifier {
 
     unawaited(_clearStalePeerDepartedFor(request.fromDeviceId));
 
-    if (Platform.isMacOS || Platform.isWindows) {
+    // macOS: pencere menü çubuğuna gizliyken native köşe paneli göster.
+    if (Platform.isMacOS) {
       final hidden =
           await DesktopBackgroundService.instance.isMainWindowHidden();
       if (hidden) {
@@ -457,30 +458,29 @@ class RecentConnectionService extends ChangeNotifier {
       await DesktopOverlayService.instance.suppressPanelsForVisibleMainWindow();
     }
 
-    final foreground = _isAppInForeground();
-
-    // Mobilde onay yalnızca tam ekran "gelen arama" ekranıyla yapılır (banner'da
-    // onay/ret yok). Bu yüzden ön plan/arka plan kontrolüne takılmadan her
-    // durumda tam ekranı tetikle; ekran navigator hazır olunca açılır, arka
-    // plandaysa öne gelince hemen görünür (20-30 sn gecikme olmaz).
-    if (Platform.isIOS || Platform.isAndroid) {
+    // iOS / Android / Windows: her zaman tam ekran "gelen arama" ekranı.
+    // Windows normal pencere uygulamasıdır (tepsi/köşe paneli yok); bu yüzden
+    // mobil ile aynı yolu kullanır. Ekran navigator hazır olunca açılır, pencere
+    // arka plandaysa öne gelince hemen görünür ve onay tek seferde tamamlanır.
+    if (Platform.isIOS || Platform.isAndroid || Platform.isWindows) {
       onShowReconnectPrompt?.call(request);
       return;
     }
 
-    // Ana pencere görünürken uygulama içi onay ekranı (masaüstü).
-    if (foreground) {
+    // macOS pencere görünürken uygulama içi onay ekranı.
+    if (_isAppInForeground()) {
       onShowReconnectPrompt?.call(request);
       return;
     }
 
-    if (Platform.isMacOS || Platform.isWindows) {
+    // macOS arka planda: native köşe paneli.
+    if (Platform.isMacOS) {
       await DesktopOverlayService.instance.showReconnectBanner(request);
       return;
     }
 
-    // Masaüstünde (FCM yok) arka planda yerel bildirim göster.
-    if (Platform.isMacOS || Platform.isWindows || Platform.isLinux) {
+    // Linux vb. (FCM yok) arka planda yerel bildirim göster.
+    if (Platform.isLinux) {
       unawaited(
         NotificationService.instance.showReconnectRequestNotification(request),
       );
