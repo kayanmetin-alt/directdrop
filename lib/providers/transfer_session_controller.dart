@@ -1188,6 +1188,7 @@ class TransferSessionController extends ChangeNotifier {
       await _webRtc?.handleSignalingMessage(message);
     } catch (e) {
       debugPrint('Signaling mesajı işlenemedi: $e');
+      rethrow;
     }
   }
 

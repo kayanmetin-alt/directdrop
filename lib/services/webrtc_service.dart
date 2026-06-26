@@ -130,71 +130,10 @@ class WebRtcService {
     _peerConnection = await createPeerConnection({
       'iceServers': _iceServers,
       'sdpSemantics': 'unified-plan',
-      // Adayları önceden topla — bağlantı kurulumunu hızlandırır.
       'iceCandidatePoolSize': 4,
     });
 
-    _peerConnection!.onIceCandidate = (candidate) async {
-      if (candidate.candidate == null || _disposed) return;
-      try {
-        await _signaling.sendMessage(
-          SignalingMessage(
-            type: SignalingType.iceCandidate,
-            fromPeerId: _localPeerId,
-            toPeerId: _remotePeerId,
-            candidate: candidate.candidate,
-            sdpMid: candidate.sdpMid,
-            sdpMLineIndex: candidate.sdpMLineIndex,
-          ),
-        );
-      } catch (e) {
-        debugPrint('ICE candidate gönderilemedi: $e');
-      }
-    };
-
-    _peerConnection!.onConnectionState = (state) {
-      if (_disposed) return;
-      debugPrint('WebRTC connection state: $state');
-      switch (state) {
-        case RTCPeerConnectionState.RTCPeerConnectionStateConnected:
-          _stopOfferRetry();
-          _stopAnswerRetry();
-          _setState(WebRtcConnectionState.connected);
-        case RTCPeerConnectionState.RTCPeerConnectionStateFailed:
-          _setState(WebRtcConnectionState.failed);
-        case RTCPeerConnectionState.RTCPeerConnectionStateDisconnected:
-        case RTCPeerConnectionState.RTCPeerConnectionStateClosed:
-          _setState(WebRtcConnectionState.disconnected);
-        default:
-          break;
-      }
-    };
-
-    _peerConnection!.onIceConnectionState = (state) {
-      if (_disposed) return;
-      debugPrint('ICE connection state: $state');
-      switch (state) {
-        case RTCIceConnectionState.RTCIceConnectionStateConnected:
-        case RTCIceConnectionState.RTCIceConnectionStateCompleted:
-          _stopOfferRetry();
-          _stopAnswerRetry();
-          if (_state != WebRtcConnectionState.connected) {
-            _setState(WebRtcConnectionState.connected);
-          }
-        case RTCIceConnectionState.RTCIceConnectionStateFailed:
-          _setState(WebRtcConnectionState.failed);
-        case RTCIceConnectionState.RTCIceConnectionStateDisconnected:
-          if (_state == WebRtcConnectionState.connected) {
-            _setState(WebRtcConnectionState.disconnected);
-          }
-        default:
-          break;
-      }
-    };
-
-    _peerConnection!.onDataChannel = (channel) {
-      _attachDataChannel(channel);
-    };
+    _wirePeerConnectionListeners(_peerConnection!);
 
     if (_isInitiator) {
       _dataChannel = await _peerConnection!.createDataChannel(
@@ -222,11 +161,106 @@ class WebRtcService {
     try {
       final offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
-      _localOfferSdp = offer.sdp;
+      await _waitForIceGatheringComplete(pc);
+      _localOfferSdp = await _refreshLocalSdp(pc) ?? offer.sdp;
       await _sendOfferMessage();
     } catch (e) {
       debugPrint('Offer oluşturulamadı: $e');
     }
+  }
+
+  Future<void> _waitForIceGatheringComplete(RTCPeerConnection pc) async {
+    try {
+      final state = await pc.getIceGatheringState();
+      if (state == RTCIceGatheringState.RTCIceGatheringStateComplete) {
+        return;
+      }
+    } catch (_) {}
+
+    final completer = Completer<void>();
+    pc.onIceGatheringState = (state) {
+      if (state == RTCIceGatheringState.RTCIceGatheringStateComplete &&
+          !completer.isCompleted) {
+        completer.complete();
+      }
+    };
+
+    try {
+      await completer.future.timeout(const Duration(seconds: 6));
+    } catch (_) {}
+  }
+
+  Future<String?> _refreshLocalSdp(RTCPeerConnection pc) async {
+    try {
+      return (await pc.getLocalDescription())?.sdp;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  void _wirePeerConnectionListeners(RTCPeerConnection pc) {
+    pc.onIceCandidate = (candidate) async {
+      if (_disposed) return;
+      final text = candidate.candidate;
+      try {
+        await _signaling.sendMessage(
+          SignalingMessage(
+            type: SignalingType.iceCandidate,
+            fromPeerId: _localPeerId,
+            toPeerId: _remotePeerId,
+            candidate: text ?? '',
+            sdpMid: candidate.sdpMid,
+            sdpMLineIndex: candidate.sdpMLineIndex,
+          ),
+        );
+      } catch (e) {
+        debugPrint('ICE candidate gönderilemedi: $e');
+      }
+    };
+
+    pc.onConnectionState = (state) {
+      if (_disposed) return;
+      debugPrint('WebRTC connection state: $state');
+      switch (state) {
+        case RTCPeerConnectionState.RTCPeerConnectionStateConnected:
+          _stopOfferRetry();
+          _stopAnswerRetry();
+          _setState(WebRtcConnectionState.connected);
+        case RTCPeerConnectionState.RTCPeerConnectionStateFailed:
+          _setState(WebRtcConnectionState.failed);
+        case RTCPeerConnectionState.RTCPeerConnectionStateDisconnected:
+        case RTCPeerConnectionState.RTCPeerConnectionStateClosed:
+          _setState(WebRtcConnectionState.disconnected);
+        default:
+          break;
+      }
+    };
+
+    pc.onIceConnectionState = (state) {
+      if (_disposed) return;
+      debugPrint('ICE connection state: $state');
+      switch (state) {
+        case RTCIceConnectionState.RTCIceConnectionStateConnected:
+        case RTCIceConnectionState.RTCIceConnectionStateCompleted:
+          _stopOfferRetry();
+          _stopAnswerRetry();
+          if (_state != WebRtcConnectionState.connected) {
+            _setState(WebRtcConnectionState.connected);
+          }
+        case RTCIceConnectionState.RTCIceConnectionStateFailed:
+          _setState(WebRtcConnectionState.failed);
+        case RTCIceConnectionState.RTCIceConnectionStateDisconnected:
+          if (_state == WebRtcConnectionState.connected) {
+            _setState(WebRtcConnectionState.disconnected);
+          }
+        default:
+          break;
+      }
+    };
+
+    pc.onDataChannel = (channel) {
+      _attachDataChannel(channel);
+    };
   }
 
   Future<void> _sendOfferMessage() async {
@@ -259,7 +293,16 @@ class WebRtcService {
         return;
       }
       _offerAttempts++;
-      unawaited(_sendOfferMessage());
+      unawaited(() async {
+        final pc = _peerConnection;
+        if (pc != null) {
+          final refreshed = await _refreshLocalSdp(pc);
+          if (refreshed != null) {
+            _localOfferSdp = refreshed;
+          }
+        }
+        await _sendOfferMessage();
+      }());
     });
   }
 
@@ -282,7 +325,16 @@ class WebRtcService {
         return;
       }
       _answerAttempts++;
-      unawaited(_sendAnswerMessage());
+      unawaited(() async {
+        final pc = _peerConnection;
+        if (pc != null) {
+          final refreshed = await _refreshLocalSdp(pc);
+          if (refreshed != null) {
+            _localAnswerSdp = refreshed;
+          }
+        }
+        await _sendAnswerMessage();
+      }());
     });
   }
 
@@ -428,7 +480,7 @@ class WebRtcService {
       case SignalingType.answer:
         await _handleAnswer(pc, message);
       case SignalingType.iceCandidate:
-        if (message.candidate == null) return;
+        if (message.candidate == null || message.candidate!.isEmpty) return;
         await _addCandidateSafe(
           RTCIceCandidate(
             message.candidate,
@@ -476,12 +528,14 @@ class WebRtcService {
 
       final answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
-      _localAnswerSdp = answer.sdp;
+      await _waitForIceGatheringComplete(pc);
+      _localAnswerSdp = await _refreshLocalSdp(pc) ?? answer.sdp;
       await _sendAnswerMessage();
       _startAnswerRetry();
       await _flushPendingSignalingMessages();
     } catch (e) {
       debugPrint('Offer işlenemedi: $e');
+      rethrow;
     }
   }
 
@@ -523,68 +577,7 @@ class WebRtcService {
       'iceCandidatePoolSize': 4,
     });
 
-    _peerConnection!.onIceCandidate = (candidate) async {
-      if (candidate.candidate == null || _disposed) return;
-      try {
-        await _signaling.sendMessage(
-          SignalingMessage(
-            type: SignalingType.iceCandidate,
-            fromPeerId: _localPeerId,
-            toPeerId: _remotePeerId,
-            candidate: candidate.candidate,
-            sdpMid: candidate.sdpMid,
-            sdpMLineIndex: candidate.sdpMLineIndex,
-          ),
-        );
-      } catch (e) {
-        debugPrint('ICE candidate gönderilemedi: $e');
-      }
-    };
-
-    _peerConnection!.onConnectionState = (state) {
-      if (_disposed) return;
-      debugPrint('WebRTC connection state: $state');
-      switch (state) {
-        case RTCPeerConnectionState.RTCPeerConnectionStateConnected:
-          _stopOfferRetry();
-          _stopAnswerRetry();
-          _setState(WebRtcConnectionState.connected);
-        case RTCPeerConnectionState.RTCPeerConnectionStateFailed:
-          _setState(WebRtcConnectionState.failed);
-        case RTCPeerConnectionState.RTCPeerConnectionStateDisconnected:
-        case RTCPeerConnectionState.RTCPeerConnectionStateClosed:
-          _setState(WebRtcConnectionState.disconnected);
-        default:
-          break;
-      }
-    };
-
-    _peerConnection!.onIceConnectionState = (state) {
-      if (_disposed) return;
-      debugPrint('ICE connection state: $state');
-      switch (state) {
-        case RTCIceConnectionState.RTCIceConnectionStateConnected:
-        case RTCIceConnectionState.RTCIceConnectionStateCompleted:
-          _stopOfferRetry();
-          _stopAnswerRetry();
-          if (_state != WebRtcConnectionState.connected) {
-            _setState(WebRtcConnectionState.connected);
-          }
-        case RTCIceConnectionState.RTCIceConnectionStateFailed:
-          _setState(WebRtcConnectionState.failed);
-        case RTCIceConnectionState.RTCIceConnectionStateDisconnected:
-          if (_state == WebRtcConnectionState.connected) {
-            _setState(WebRtcConnectionState.disconnected);
-          }
-        default:
-          break;
-      }
-    };
-
-    _peerConnection!.onDataChannel = (channel) {
-      _attachDataChannel(channel);
-    };
-
+    _wirePeerConnectionListeners(_peerConnection!);
     _startConnectionSync();
 
     if (lastOffer != null) {
@@ -639,6 +632,7 @@ class WebRtcService {
       await _flushPendingCandidates();
     } catch (e) {
       debugPrint('Answer işlenemedi: $e');
+      rethrow;
     }
   }
 

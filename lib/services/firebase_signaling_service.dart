@@ -290,7 +290,7 @@ class FirebaseSignalingService {
     });
   }
 
-  /// Mesajları sırayla, çift işlemeden ele alır; işlenince Firebase'den siler.
+  /// Mesajları sırayla, çift işlemeden ele alır; başarılı işlenince Firebase'den siler.
   void _enqueue(DataSnapshot snapshot) {
     final key = snapshot.key;
     if (key == null) return;
@@ -301,10 +301,16 @@ class FirebaseSignalingService {
 
     final message = SignalingMessage.fromJson(value);
     _dispatchChain = _dispatchChain.then((_) async {
+      var handled = false;
       try {
         await _onMessage?.call(message);
+        handled = true;
       } catch (e) {
         debugPrint('Sinyal mesajı işlenemedi: $e');
+      }
+      if (!handled) {
+        _processedKeys.remove(key);
+        return;
       }
       try {
         await snapshot.ref.remove();
@@ -327,7 +333,14 @@ class FirebaseSignalingService {
     final snapshot =
         await _roomRef!.child('signaling').child(localPeerId).get();
     if (snapshot.exists && snapshot.value is Map) {
-      for (final child in snapshot.children) {
+      final children = snapshot.children.toList()
+        ..sort((a, b) {
+          final aTs = _messageTimestamp(a);
+          final bTs = _messageTimestamp(b);
+          if (aTs != bTs) return aTs.compareTo(bTs);
+          return (a.key ?? '').compareTo(b.key ?? '');
+        });
+      for (final child in children) {
         _enqueue(child);
       }
     }
@@ -377,5 +390,14 @@ class FirebaseSignalingService {
     _roomRef = null;
     _onMessage = null;
     _processedKeys.clear();
+  }
+
+  int _messageTimestamp(DataSnapshot snapshot) {
+    final value = snapshot.value;
+    if (value is! Map) return 0;
+    final ts = value['timestamp'];
+    if (ts is int) return ts;
+    if (ts is num) return ts.toInt();
+    return 0;
   }
 }

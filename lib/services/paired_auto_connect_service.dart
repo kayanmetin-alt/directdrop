@@ -309,6 +309,10 @@ class PairedAutoConnectService extends ChangeNotifier {
       return;
     }
 
+    if (RecentConnectionService.instance.isReconnectFlowActiveFor(fromId)) {
+      return;
+    }
+
     final value = snapshot.value;
     if (value is! Map) return;
 
