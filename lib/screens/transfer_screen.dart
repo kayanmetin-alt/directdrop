@@ -272,6 +272,9 @@ class _TransferScreenState extends State<TransferScreen>
   }
 
   String _connectionLabel(WebRtcConnectionState state) {
+    if (_controller.isConnected) {
+      return 'Bağlı — doğrudan P2P';
+    }
     switch (state) {
       case WebRtcConnectionState.connected:
         return 'Bağlı — doğrudan P2P';
@@ -343,7 +346,8 @@ class _TransferScreenState extends State<TransferScreen>
       return false;
     }
     return controller.connectionState == WebRtcConnectionState.disconnected ||
-        controller.connectionState == WebRtcConnectionState.failed;
+        controller.connectionState == WebRtcConnectionState.failed ||
+        controller.connectionState == WebRtcConnectionState.connecting;
   }
 
   Future<void> _manualReconnect() async {
@@ -478,7 +482,9 @@ class _TransferScreenState extends State<TransferScreen>
               !_controller.peerHasLeft) ...[
             const SizedBox(height: 6),
             Text(
-              _controller.isReconnecting
+              _controller.isReconnecting ||
+                      _controller.connectionState ==
+                          WebRtcConnectionState.connecting
                   ? 'Bağlantı kuruluyor…'
                   : 'Dosya göndermek için önce bağlantıyı yenileyin.',
               textAlign: TextAlign.center,
