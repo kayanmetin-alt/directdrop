@@ -1150,6 +1150,7 @@ class TransferSessionController extends ChangeNotifier {
         localPeerId: session.peerId,
         onMessage: _onSignalingMessage,
       );
+      _scheduleConnectionWatch();
     } catch (e) {
       _errorMessage = e.toString();
       _connectionState = WebRtcConnectionState.failed;
@@ -1187,6 +1188,7 @@ class TransferSessionController extends ChangeNotifier {
       await _webRtc?.handleSignalingMessage(message);
     } catch (e) {
       debugPrint('Signaling mesajı işlenemedi: $e');
+      rethrow;
     }
   }
 
@@ -1206,6 +1208,7 @@ class TransferSessionController extends ChangeNotifier {
       remotePeerId: _session!.remotePeerId!,
       isInitiator: false,
     );
+    _scheduleConnectionWatch();
   }
 
   Future<void> sendFilePaths(

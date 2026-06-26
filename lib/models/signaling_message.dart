@@ -46,7 +46,7 @@ class SignalingMessage {
       sdp: json['sdp'] as String?,
       candidate: json['candidate'] as String?,
       sdpMid: json['sdpMid'] as String?,
-      sdpMLineIndex: json['sdpMLineIndex'] as int?,
+      sdpMLineIndex: (json['sdpMLineIndex'] as num?)?.toInt(),
       timestamp: json['timestamp'] as int?,
     );
   }
