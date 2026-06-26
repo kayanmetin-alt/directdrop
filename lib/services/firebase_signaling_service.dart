@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 import '../models/signaling_message.dart';
 import '../utils/room_code_generator.dart';
 import 'firebase_auth_service.dart';
+import 'firebase_rtdb_service.dart';
 
 typedef SignalingCallback = FutureOr<void> Function(SignalingMessage message);
 
@@ -33,6 +34,7 @@ class FirebaseSignalingService {
     required String devicePlatform,
     required String persistentDeviceId,
   }) async {
+    await FirebaseRtdbService.ensureReady();
     final hostAuthUid = await FirebaseAuthService.instance.requireUid();
     var code = roomCode.trim().toUpperCase();
 
@@ -118,21 +120,32 @@ class FirebaseSignalingService {
 
   /// Davet ile katılmadan önce odanın hâlâ açık olduğunu doğrular.
   Future<void> assertRoomJoinable(String roomCode) async {
+    await FirebaseRtdbService.ensureReady();
     final normalized = roomCode.trim().toUpperCase();
-    final snapshot = await _rooms.child(normalized).get();
-    if (!snapshot.exists) {
-      throw StateError('Oda bulunamadı veya süresi doldu. Tekrar deneyin.');
-    }
-    final data = Map<String, dynamic>.from(snapshot.value as Map);
-    final status = data['status'] as String?;
-    if (status == 'closed') {
-      throw StateError('Bu oda kapatılmış. Yeniden eşleşin.');
-    }
-    if (status != 'waiting') {
-      throw StateError(
-        'Oda artık müsait değil (durum: $status). '
-        'Sadece bir cihazdan bağlanmayı deneyin.',
-      );
+    try {
+      final snapshot = await _rooms.child(normalized).get();
+      if (!snapshot.exists) {
+        throw StateError('Oda bulunamadı veya süresi doldu. Tekrar deneyin.');
+      }
+      final data = Map<String, dynamic>.from(snapshot.value as Map);
+      final status = data['status'] as String?;
+      if (status == 'closed') {
+        throw StateError('Bu oda kapatılmış. Yeniden eşleşin.');
+      }
+      if (status != 'waiting') {
+        throw StateError(
+          'Oda artık müsait değil (durum: $status). '
+          'Windows tarafında yeni oda açıp kodu yenileyin.',
+        );
+      }
+    } on FirebaseException catch (e) {
+      if (e.code == 'permission-denied') {
+        throw StateError(
+          'Odaya erişim reddedildi. Her iki cihazda uygulamayı güncelleyin, '
+          'Windows\'ta yeni oda açıp kodu tekrar deneyin.',
+        );
+      }
+      rethrow;
     }
   }
 
@@ -143,6 +156,7 @@ class FirebaseSignalingService {
     required String devicePlatform,
     required String persistentDeviceId,
   }) async {
+    await FirebaseRtdbService.ensureReady();
     final guestAuthUid = await FirebaseAuthService.instance.requireUid();
     final normalizedCode = roomCode.trim().toUpperCase();
     await assertRoomJoinable(normalizedCode);
