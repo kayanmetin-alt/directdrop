@@ -20,14 +20,14 @@ import 'package:flutter/foundation.dart';
 class AppCheckService {
   AppCheckService._();
 
-  static bool get _isSupported =>
+  static bool get isSupported =>
       Platform.isAndroid || Platform.isIOS || Platform.isMacOS;
 
   static Future<void>? _activation;
 
   /// RTDB yazımından önce çağrılır; App Check etkinleştirmesinin bitmesini bekler.
   static Future<void> ensureActivated() {
-    if (!_isSupported) return Future<void>.value();
+    if (!isSupported) return Future<void>.value();
     return _activation ??= _activateInternal();
   }
 

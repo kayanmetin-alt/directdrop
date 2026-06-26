@@ -74,7 +74,11 @@ Future<void> main() async {
       debugPrint('Firebase persistence kapatılamadı: $e');
     }
     // App Check jetonlarını üretmeye başla (zorunluluk Console'dan açılır).
-    unawaited(AppCheckService.activate());
+    if (AppCheckService.isSupported) {
+      await AppCheckService.ensureActivated();
+    } else {
+      unawaited(AppCheckService.activate());
+    }
     if (Platform.isIOS || Platform.isAndroid) {
       FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
     }

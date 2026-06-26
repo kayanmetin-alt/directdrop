@@ -1,0 +1,38 @@
+name: Deploy Firebase Database Rules
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - 'database.rules.json'
+      - 'firebase/database.rules.json'
+      - '.github/workflows/deploy-database-rules.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Firebase CLI
+        run: npm install -g firebase-tools
+
+      - name: Deploy database rules
+        env:
+          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
+        run: |
+          if [ -z "$FIREBASE_TOKEN" ]; then
+            echo "FIREBASE_TOKEN secret yok — kurallar manuel deploy edilmeli:"
+            echo "  firebase deploy --only database"
+            exit 0
+          fi
+          firebase deploy --only database --token "$FIREBASE_TOKEN"

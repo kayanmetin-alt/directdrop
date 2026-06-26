@@ -10,7 +10,8 @@ String userFacingMessage(Object error) {
   if (error is FirebaseException) {
     switch (error.code) {
       case 'permission-denied':
-        return 'Sunucu izni reddedildi. Uygulamayı güncelleyin veya QR ile yeniden eşleşin.';
+        return 'Sunucu izni reddedildi. Her iki cihazda uygulamayı güncelleyin. '
+            'Windows\'ta Transfer Başlat ile yeni oda açıp kodu tekrar deneyin.';
       case 'network-error':
       case 'unavailable':
         return 'İnternet veya Firebase bağlantısı yok. Ağı kontrol edip tekrar deneyin.';

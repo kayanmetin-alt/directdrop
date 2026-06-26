@@ -5,7 +5,7 @@ abstract final class DownloadUrls {
 
   /// GitHub Releases'teki güncel Windows kurulum sürümü.
   /// Her Windows yayınında bu değeri pubspec ile birlikte güncelleyin.
-  static const windowsReleaseVersion = '1.3.34';
+  static const windowsReleaseVersion = '1.3.35';
 
   static String windowsInstaller([String? version]) =>
       'https://github.com/kayanmetin-alt/directdrop/releases/download/v${version ?? windowsReleaseVersion}/DirectDrop-Setup-${version ?? windowsReleaseVersion}.exe';

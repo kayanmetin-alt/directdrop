@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
@@ -181,6 +182,15 @@ class _JoinScreenState extends State<JoinScreen> {
               ? 'Cihaz veya oda kodu bulunamadı. Karşı cihazda uygulama açık '
                   'olsun; Transfer Başlat veya Cihaz QR ekranını kullanın.'
               : e.message;
+          _joinInProgress = false;
+          _waitingForApproval = false;
+          _statusMessage = null;
+          _pendingPeerName = null;
+        });
+        return;
+      } on FirebaseException catch (e) {
+        setState(() {
+          _error = userFacingMessage(e);
           _joinInProgress = false;
           _waitingForApproval = false;
           _statusMessage = null;
