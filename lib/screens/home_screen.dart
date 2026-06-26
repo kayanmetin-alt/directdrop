@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 
+import '../services/developer_mode_service.dart';
 import '../services/device_identity_service.dart';
 import '../services/paired_devices_service.dart';
 import '../services/recent_connection_service.dart';
@@ -31,6 +32,7 @@ class _HomeScreenState extends State<HomeScreen> {
   final _pairedService = PairedDevicesService.instance;
   final _recentConnect = RecentConnectionService.instance;
   final _identity = DeviceIdentityService.instance;
+  final _devMode = DeveloperModeService.instance;
   var _deviceNamePromptShown = false;
 
   @override
@@ -39,6 +41,8 @@ class _HomeScreenState extends State<HomeScreen> {
     _pairedService.load();
     _pairedService.addListener(_onChanged);
     _recentConnect.addListener(_onChanged);
+    _devMode.addListener(_onChanged);
+    unawaited(_devMode.load());
     unawaited(_recentConnect.ensureListening());
     WidgetsBinding.instance.addPostFrameCallback((_) {
       unawaited(_maybePromptDeviceName());
@@ -62,7 +66,31 @@ class _HomeScreenState extends State<HomeScreen> {
   void dispose() {
     _pairedService.removeListener(_onChanged);
     _recentConnect.removeListener(_onChanged);
+    _devMode.removeListener(_onChanged);
     super.dispose();
+  }
+
+  void _onVersionTap() {
+    final result = _devMode.registerSecretTap();
+    if (!mounted) return;
+    if (result.unlockedNow) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Geliştirici modu açıldı. Ayarlar\'dan araçları yönetebilirsiniz.',
+          ),
+        ),
+      );
+    } else if (result.remaining != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          duration: const Duration(milliseconds: 700),
+          content: Text(
+            'Geliştirici modu için ${result.remaining} dokunuş kaldı',
+          ),
+        ),
+      );
+    }
   }
 
   void _onChanged() {
@@ -92,17 +120,18 @@ class _HomeScreenState extends State<HomeScreen> {
         title: const Text('DirectDrop'),
         centerTitle: true,
         actions: [
-          IconButton(
-            icon: const Icon(Icons.health_and_safety_outlined),
-            tooltip: 'Bağlantı tanılama',
-            onPressed: () {
-              Navigator.of(context).push(
-                MaterialPageRoute<void>(
-                  builder: (_) => const DiagnosticsScreen(),
-                ),
-              );
-            },
-          ),
+          if (_devMode.toolsEnabled)
+            IconButton(
+              icon: const Icon(Icons.health_and_safety_outlined),
+              tooltip: 'Bağlantı tanılama',
+              onPressed: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => const DiagnosticsScreen(),
+                  ),
+                );
+              },
+            ),
           IconButton(
             icon: const Icon(Icons.settings_outlined),
             tooltip: 'Ayarlar',
@@ -185,7 +214,13 @@ class _HomeScreenState extends State<HomeScreen> {
               const SizedBox(height: 16),
               const RecentPairedDevicesCard(),
               const SizedBox(height: 16),
-              const Center(child: AppVersionLabel()),
+              Center(
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: _onVersionTap,
+                  child: const AppVersionLabel(),
+                ),
+              ),
             ],
           ),
           ),
