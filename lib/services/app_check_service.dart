@@ -20,8 +20,21 @@ import 'package:flutter/foundation.dart';
 class AppCheckService {
   AppCheckService._();
 
+  /// App Check varsayılan olarak KAPALI. Nedeni: RTDB backend'i, token YOKSA
+  /// (Windows/Linux gibi App Check'siz istemciler) bağlantıyı kabul eder; ancak
+  /// token VARSA — enforcement kapalı olsa bile — doğrular ve geçersizse tüm
+  /// bağlantıyı reddeder. Sideload/App Store dışı iOS build'lerinde
+  /// `AppleDeviceCheckProvider` geçerli token üretemediğinden, App Check'i
+  /// etkinleştirmek RTDB'yi tamamen kırar (.info/connected dahil permission-denied).
+  ///
+  /// App Store / Play Store yayını için App Check istendiğinde derlemede
+  /// `--dart-define=DIRECTDROP_APP_CHECK=true` verilerek açılır; o zaman Firebase
+  /// Console'da Enforce de açılmalıdır.
+  static const bool _enabled =
+      bool.fromEnvironment('DIRECTDROP_APP_CHECK', defaultValue: false);
+
   static bool get isSupported =>
-      Platform.isAndroid || Platform.isIOS || Platform.isMacOS;
+      _enabled && (Platform.isAndroid || Platform.isIOS || Platform.isMacOS);
 
   static Future<void>? _activation;
 
