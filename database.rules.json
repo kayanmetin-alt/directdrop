@@ -15,8 +15,8 @@
     },
     "pairConnect": {
       "$pairKey": {
-        ".read": "auth != null",
-        ".write": "auth != null && !newData.exists()"
+        ".read": "auth != null && (!data.exists() || root.child('devices').child(data.child('hostDeviceId').val()).child('ownerUid').val() === auth.uid || root.child('pairings').child(auth.uid).child(data.child('hostDeviceId').val()).val() === true)",
+        ".write": "auth != null && !newData.exists() && data.exists() && (root.child('devices').child(data.child('hostDeviceId').val()).child('ownerUid').val() === auth.uid || root.child('pairings').child(auth.uid).child(data.child('hostDeviceId').val()).val() === true)"
       }
     },
     "deviceTokens": {
@@ -25,28 +25,43 @@
         ".write": "auth != null && root.child('devices').child($deviceId).child('ownerUid').val() === auth.uid"
       }
     },
+    "presence": {
+      "$deviceId": {
+        ".read": "auth != null && (root.child('devices').child($deviceId).child('ownerUid').val() === auth.uid || root.child('pairings').child(auth.uid).child($deviceId).val() === true)",
+        ".write": "auth != null && root.child('devices').child($deviceId).child('ownerUid').val() === auth.uid"
+      }
+    },
+    "pairings": {
+      "$ownerUid": {
+        ".read": "auth != null && auth.uid === $ownerUid",
+        "$peerDeviceId": {
+          ".write": "auth != null && auth.uid === $ownerUid && (newData.val() === true || !newData.exists())"
+        }
+      }
+    },
     "pairInvites": {
       "$targetDeviceId": {
         ".read": "auth != null && root.child('devices').child($targetDeviceId).child('ownerUid').val() === auth.uid",
         "$fromDeviceId": {
-          ".write": "auth != null && ((newData.exists() && newData.child('fromAuthUid').val() === auth.uid && (root.child('devices').child($fromDeviceId).child('ownerUid').val() === auth.uid || root.child('devices').child($targetDeviceId).child('ownerUid').val() === auth.uid)) || (!newData.exists() && (data.child('fromAuthUid').val() === auth.uid || root.child('devices').child($targetDeviceId).child('ownerUid').val() === auth.uid || root.child('devices').child($fromDeviceId).child('ownerUid').val() === auth.uid)))"
+          ".write": "auth != null && ((newData.exists() && newData.child('fromAuthUid').val() === auth.uid && root.child('devices').child($fromDeviceId).child('ownerUid').val() === auth.uid) || (!newData.exists() && (data.child('fromAuthUid').val() === auth.uid || root.child('devices').child($targetDeviceId).child('ownerUid').val() === auth.uid)))"
         }
       }
     },
     "inviteCodes": {
       "$code": {
-        ".read": "auth != null",
-        ".write": "auth != null && ((!data.exists() && newData.child('ownerUid').val() === auth.uid) || (data.child('ownerUid').val() === auth.uid))"
+        ".read": "auth != null && $code.matches(/^[A-Z0-9]{6,8}$/)",
+        ".write": "auth != null && ((!data.exists() && newData.child('ownerUid').val() === auth.uid) || (data.child('ownerUid').val() === auth.uid))",
+        ".validate": "newData.hasChildren(['deviceId', 'ownerUid'])"
       }
     },
     "devices": {
       "$deviceId": {
-        ".read": "auth != null",
+        ".read": "auth != null && data.child('ownerUid').val() === auth.uid",
         ".write": "auth != null && ((!data.exists() && newData.child('ownerUid').val() === auth.uid) || (data.child('ownerUid').val() === auth.uid) || (!data.hasChild('ownerUid') && newData.child('ownerUid').val() === auth.uid))",
         "wakeRequests": {
           "$requestId": {
             ".read": "auth != null && root.child('devices').child($deviceId).child('ownerUid').val() === auth.uid",
-            ".write": "auth != null && ((newData.exists() && newData.child('fromAuthUid').val() === auth.uid && root.child('devices').child(newData.child('fromDeviceId').val()).child('ownerUid').val() === auth.uid) || (!newData.exists() && (data.child('fromAuthUid').val() === auth.uid || root.child('devices').child($deviceId).child('ownerUid').val() === auth.uid)))"
+            ".write": "auth != null && ((newData.exists() && newData.child('fromAuthUid').val() === auth.uid && root.child('devices').child(newData.child('fromDeviceId').val()).child('ownerUid').val() === auth.uid && root.child('pairings').child(auth.uid).child($deviceId).val() === true) || (!newData.exists() && (data.child('fromAuthUid').val() === auth.uid || root.child('devices').child($deviceId).child('ownerUid').val() === auth.uid)))"
           }
         },
         "incomingPair": {
@@ -58,13 +73,13 @@
         "reconnectRequests": {
           "$fromDeviceId": {
             ".read": "auth != null && root.child('devices').child($deviceId).child('ownerUid').val() === auth.uid",
-            ".write": "auth != null && ((newData.exists() && newData.child('fromAuthUid').val() === auth.uid && root.child('devices').child($fromDeviceId).child('ownerUid').val() === auth.uid) || (!newData.exists() && (data.child('fromAuthUid').val() === auth.uid || root.child('devices').child($deviceId).child('ownerUid').val() === auth.uid)))"
+            ".write": "auth != null && ((newData.exists() && newData.child('fromAuthUid').val() === auth.uid && root.child('devices').child($fromDeviceId).child('ownerUid').val() === auth.uid && root.child('pairings').child(auth.uid).child($deviceId).val() === true) || (!newData.exists() && (data.child('fromAuthUid').val() === auth.uid || root.child('devices').child($deviceId).child('ownerUid').val() === auth.uid)))"
           }
         },
         "peerDeparted": {
           "$fromDeviceId": {
             ".read": "auth != null && root.child('devices').child($deviceId).child('ownerUid').val() === auth.uid",
-            ".write": "auth != null && ((newData.exists() && newData.child('fromAuthUid').val() === auth.uid && root.child('devices').child($fromDeviceId).child('ownerUid').val() === auth.uid) || (!newData.exists() && (data.child('fromAuthUid').val() === auth.uid || root.child('devices').child($deviceId).child('ownerUid').val() === auth.uid)))"
+            ".write": "auth != null && ((newData.exists() && newData.child('fromAuthUid').val() === auth.uid && root.child('devices').child($fromDeviceId).child('ownerUid').val() === auth.uid && root.child('pairings').child(auth.uid).child($deviceId).val() === true) || (!newData.exists() && (data.child('fromAuthUid').val() === auth.uid || root.child('devices').child($deviceId).child('ownerUid').val() === auth.uid)))"
           }
         }
       }

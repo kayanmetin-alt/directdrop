@@ -1,9 +1,11 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/paired_device.dart';
+import 'pairings_registry_service.dart';
 
 class PairedDevicesService extends ChangeNotifier {
   PairedDevicesService._();
@@ -35,6 +37,7 @@ class PairedDevicesService extends ChangeNotifier {
     }
     _loaded = true;
     notifyListeners();
+    unawaited(PairingsRegistryService.instance.syncAll(_devices));
   }
 
   /// Aynı cihaz için birden fazla satır oluşmasını engeller. Aynı `deviceId`
@@ -126,6 +129,7 @@ class PairedDevicesService extends ChangeNotifier {
     _devices.sort((a, b) => b.lastConnectedAt.compareTo(a.lastConnectedAt));
     await _persist();
     notifyListeners();
+    await PairingsRegistryService.instance.syncAll(_devices);
   }
 
   Future<void> remove(String deviceId) async {
@@ -133,6 +137,8 @@ class PairedDevicesService extends ChangeNotifier {
     _devices.removeWhere((d) => d.deviceId == deviceId);
     await _persist();
     notifyListeners();
+    unawaited(PairingsRegistryService.instance.removePeer(deviceId));
+    unawaited(PairingsRegistryService.instance.syncAll(_devices));
   }
 
   PairedDevice? findByDeviceId(String deviceId) {

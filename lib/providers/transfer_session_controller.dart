@@ -144,7 +144,7 @@ class TransferSessionController extends ChangeNotifier {
         return peerPlatform;
       }
 
-      final device = await _deviceRegistry.readDevice(peerDeviceId!);
+      final device = await _deviceRegistry.readPresence(peerDeviceId!);
       final registryPlatform = device?['platform'] as String?;
       if (registryPlatform != null &&
           registryPlatform.isNotEmpty &&
@@ -954,7 +954,7 @@ class TransferSessionController extends ChangeNotifier {
     final peerId = peerDeviceId;
     if (peerId == null) return false;
     try {
-      final data = await _deviceRegistry.readDevice(peerId);
+      final data = await _deviceRegistry.readPresence(peerId);
       if (data == null) return false;
       return data['online'] != true;
     } catch (e) {

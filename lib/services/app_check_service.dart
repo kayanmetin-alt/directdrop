@@ -5,13 +5,17 @@ import 'package:flutter/foundation.dart';
 
 /// Firebase App Check'i etkinleştirir. App Check, isteklerin gerçekten bu
 /// uygulamadan geldiğini doğrulayan bir jeton ekler; böylece uygulama dışı
-/// scriptlerin anonim auth ile RTDB'yi kötüye kullanması (cihaz enumerasyonu,
-/// wake/reconnect spam'i, oda kodu brute-force) zorlaşır.
+/// scriptlerin anonim auth ile RTDB'yi kötüye kullanması zorlaşır.
 ///
-/// NOT: Bu yalnızca jeton ÜRETİR. Gerçek zorunluluk Firebase Console'dan
-/// (App Check → Enforce) açılana kadar mevcut istekler bozulmaz. Önce
-/// uygulamayı kaydedip debug jetonlarını ekleyin, ardından enforcement'ı açın.
+/// **Console'da zorunlu kılma (Enforce):**
+/// 1. Firebase Console → App Check → uygulamayı kaydet (iOS/Android/macOS).
+/// 2. Debug build için: Xcode/Android log'undan debug token'ı kopyala →
+///    App Check → Manage debug tokens → ekle.
+/// 3. Realtime Database → App Check sekmesi → **Enforce** aç.
+/// 4. Windows/Linux App Check desteklemez; bu platformlar RTDB'ye erişmeye
+///    devam eder (mobil/macOS istemcileri korunur).
 ///
+/// NOT: Enforce açılmadan jeton üretilir ama reddedilmez.
 /// Windows/Linux'ta App Check eklentisi yoktur; bu platformlarda atlanır.
 class AppCheckService {
   AppCheckService._();

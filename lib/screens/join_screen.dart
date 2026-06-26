@@ -12,6 +12,7 @@ import '../services/persistent_invite_code_service.dart';
 import '../services/paired_auto_connect_service.dart';
 import '../services/paired_devices_service.dart';
 import '../services/recent_connection_service.dart';
+import '../utils/invite_code_parser.dart';
 import '../utils/session_exit_helper.dart';
 import '../utils/user_facing_error.dart';
 import '../widgets/connect_waiting_panel.dart';
@@ -83,9 +84,11 @@ class _JoinScreenState extends State<JoinScreen> {
   Future<void> _join({bool fromQr = false}) async {
     if (_joinInProgress) return;
 
-    final code = _codeController.text.trim().toUpperCase();
+    final code = InviteCodeParser.normalize(_codeController.text);
+    _codeController.text = code;
+
     if (fromQr) {
-      if (code.length < 6) {
+      if (!InviteCodeParser.isValid(code)) {
         setState(() => _error = 'QR geçersiz kod içermiyor.');
         return;
       }
@@ -138,6 +141,20 @@ class _JoinScreenState extends State<JoinScreen> {
         return;
       }
 
+      // QR ile taranan kod cihaz davet kodudur; geçici oda kodu değildir.
+      if (fromQr) {
+        setState(() {
+          _error =
+              'Cihaz QR kodu bulunamadı. Karşı cihazda DirectDrop açık olsun, '
+              'ana ekranda QR görünsün veya birkaç saniye bekleyip tekrar deneyin.';
+          _joinInProgress = false;
+          _waitingForApproval = false;
+          _statusMessage = null;
+          _pendingPeerName = null;
+        });
+        return;
+      }
+
       setState(() {
         _pendingPeerName = null;
         _waitingForApproval = false;
@@ -175,7 +192,7 @@ class _JoinScreenState extends State<JoinScreen> {
     final raw = capture.barcodes.first.rawValue;
     if (raw == null || raw.isEmpty) return;
 
-    _codeController.text = raw.trim().toUpperCase();
+    _codeController.text = InviteCodeParser.normalize(raw);
     setState(() => _scanning = false);
     _join(fromQr: true);
   }

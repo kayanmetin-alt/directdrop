@@ -24,6 +24,7 @@ import 'services/download_directory_service.dart';
 import 'services/firebase_auth_service.dart';
 import 'services/notification_service.dart';
 import 'services/paired_devices_service.dart';
+import 'services/pairings_registry_service.dart';
 import 'services/session_cleanup_service.dart';
 import 'services/active_session_registry.dart';
 import 'services/app_check_service.dart';
@@ -174,6 +175,10 @@ Future<void> _retryBootstrap() async {
 Future<void> _startBackgroundServices() async {
   try {
     await PairedDevicesService.instance.load();
+    unawaited(PersistentInviteCodeService.instance.resyncCurrentMapping());
+    unawaited(PairingsRegistryService.instance.syncAll(
+      PairedDevicesService.instance.devices,
+    ));
     await TransferHistoryService.instance.load();
     await DownloadDirectoryService.instance.load();
     await DeviceIdentityService.instance.load();

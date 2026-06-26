@@ -23,6 +23,7 @@ class DeviceRegistryService {
   bool _connectionMonitorStarted = false;
 
   DatabaseReference get _devices => _database.ref('devices');
+  DatabaseReference get _presence => _database.ref('presence');
   DatabaseReference get _pairInvites => _database.ref('pairInvites');
 
   Future<void> registerCurrentDevice({String? fcmToken}) async {
@@ -59,11 +60,36 @@ class DeviceRegistryService {
     if (fcmToken != null) {
       await _writeDeviceToken(deviceId, fcmToken);
     }
+    await _syncPresence(
+      deviceId: deviceId,
+      online: true,
+      displayName: identity.displayName,
+      platform: identity.platformLabel,
+    );
     await Future<void>.delayed(const Duration(milliseconds: 300));
     await _configureDisconnectHandlers(ref);
   }
 
   DatabaseReference get _deviceTokens => _database.ref('deviceTokens');
+
+  Future<void> _syncPresence({
+    required String deviceId,
+    required bool online,
+    String? displayName,
+    String? platform,
+  }) async {
+    try {
+      final payload = <String, dynamic>{
+        'online': online,
+        'lastSeen': ServerValue.timestamp,
+        if (displayName != null) 'displayName': displayName,
+        if (platform != null) 'platform': platform,
+      };
+      await _presence.child(deviceId).update(payload);
+    } catch (e) {
+      debugPrint('Presence güncellenemedi: $e');
+    }
+  }
 
   /// FCM token'ı yalnızca sahibinin okuyabildiği ayrı düğüme yazar.
   Future<void> _writeDeviceToken(String deviceId, String token) async {
@@ -81,15 +107,28 @@ class DeviceRegistryService {
       'online': online,
       'lastSeen': ServerValue.timestamp,
     });
+    await _presence.child(deviceId).update({
+      'online': online,
+      'lastSeen': ServerValue.timestamp,
+    });
     if (online) {
       await _configureDisconnectHandlers(ref);
     }
   }
 
   Future<void> _configureDisconnectHandlers(DatabaseReference deviceRef) async {
+    final deviceId = deviceRef.key;
     try {
       await deviceRef.child('online').onDisconnect().set(false);
       await deviceRef.child('lastSeen').onDisconnect().set(ServerValue.timestamp);
+      if (deviceId != null) {
+        await _presence.child(deviceId).child('online').onDisconnect().set(false);
+        await _presence
+            .child(deviceId)
+            .child('lastSeen')
+            .onDisconnect()
+            .set(ServerValue.timestamp);
+      }
     } catch (e) {
       debugPrint('onDisconnect kaydı başarısız: $e');
     }
@@ -103,11 +142,17 @@ class DeviceRegistryService {
     try {
       await ref.child('online').onDisconnect().cancel();
       await ref.child('lastSeen').onDisconnect().cancel();
+      await _presence.child(deviceId).child('online').onDisconnect().cancel();
+      await _presence.child(deviceId).child('lastSeen').onDisconnect().cancel();
     } catch (e) {
       debugPrint('onDisconnect iptali başarısız: $e');
     }
     try {
       await ref.update({
+        'online': true,
+        'lastSeen': ServerValue.timestamp,
+      });
+      await _presence.child(deviceId).update({
         'online': true,
         'lastSeen': ServerValue.timestamp,
       });
@@ -147,6 +192,10 @@ class DeviceRegistryService {
     try {
       final deviceId = await DeviceIdentityService.instance.getDeviceId();
       await _devices.child(deviceId).update({
+        'online': true,
+        'lastSeen': ServerValue.timestamp,
+      });
+      await _presence.child(deviceId).update({
         'online': true,
         'lastSeen': ServerValue.timestamp,
       });
@@ -199,7 +248,7 @@ class DeviceRegistryService {
   }
 
   Stream<DevicePresence> watchPresence(String deviceId) {
-    return _devices.child(deviceId).onValue.map((event) {
+    return _presence.child(deviceId).onValue.map((event) {
       final value = event.snapshot.value;
       if (value is! Map) {
         return const DevicePresence(online: false);
@@ -233,6 +282,13 @@ class DeviceRegistryService {
 
   Future<Map<String, dynamic>?> readDevice(String deviceId) async {
     final snapshot = await _devices.child(deviceId).get();
+    if (!snapshot.exists || snapshot.value is! Map) return null;
+    return Map<String, dynamic>.from(snapshot.value as Map);
+  }
+
+  /// Eşleştirilmiş cihazların çevrimiçi durumu — yalnızca `presence/` düğümünden.
+  Future<Map<String, dynamic>?> readPresence(String deviceId) async {
+    final snapshot = await _presence.child(deviceId).get();
     if (!snapshot.exists || snapshot.value is! Map) return null;
     return Map<String, dynamic>.from(snapshot.value as Map);
   }
