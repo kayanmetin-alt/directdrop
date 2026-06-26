@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 
+import '../main.dart';
 import '../services/developer_mode_service.dart';
 import '../services/device_identity_service.dart';
 import '../services/paired_devices_service.dart';
@@ -28,7 +29,7 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen> with RouteAware {
   final _pairedService = PairedDevicesService.instance;
   final _recentConnect = RecentConnectionService.instance;
   final _identity = DeviceIdentityService.instance;
@@ -63,7 +64,24 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final route = ModalRoute.of(context);
+    if (route is PageRoute) {
+      appRouteObserver.subscribe(this, route);
+    }
+  }
+
+  @override
+  void didPopNext() {
+    // Üstteki bir ekran (oturum/transfer/bağlanma) kapandı ve ana sayfaya
+    // dönüldü: bayat bağlantı durumunu sıfırla ki yeni deneme kilitlenmesin.
+    unawaited(_recentConnect.resetForFreshStart());
+  }
+
+  @override
   void dispose() {
+    appRouteObserver.unsubscribe(this);
     _pairedService.removeListener(_onChanged);
     _recentConnect.removeListener(_onChanged);
     _devMode.removeListener(_onChanged);

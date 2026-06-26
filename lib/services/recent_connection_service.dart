@@ -99,6 +99,46 @@ class RecentConnectionService extends ChangeNotifier {
     clearIncomingInvite();
   }
 
+  /// Ana sayfaya her dönüşte çağrılır: uygulamayı yeni açmış gibi, bu cihaza
+  /// ait bayat sinyal "gelen kutularını" ve bellek-içi kilitleri temizler.
+  /// Böylece önceki oturumdan kalan eski oda/davet/istek kayıtları yeni bir
+  /// bağlantı denemesini kilitlemez ("asla bağlanmıyor / sürekli bağlanıyormuş
+  /// gibi yapıyor" hatası).
+  ///
+  /// GÜVENLİK: Aktif bir oturum veya devam eden bir bağlanma (inflight) varken
+  /// hiçbir şey yapmaz; kalıcı veriler (pairings, devices, inviteCodes) korunur,
+  /// yalnızca bu cihazın geçici sinyal düğümleri temizlenir.
+  Future<void> resetForFreshStart() async {
+    if (ActiveSessionRegistry.instance.hasActiveSession) return;
+    if (_inflight.isNotEmpty) return;
+
+    // Bellek-içi kilitler.
+    _autoConnectActivePeerId = null;
+    _approvingReconnectFromId = null;
+    _consumedReconnectKeys.clear();
+    _incomingInvitePeer = null;
+    _incomingReconnectRequest = null;
+    notifyListeners();
+
+    // DB: yalnızca bu cihaza ait geçici gelen-kutuları ve pairConnect oturumları.
+    try {
+      final myId = await DeviceIdentityService.instance.getDeviceId();
+      await _registry.clearAllInvitesForDevice(myId);
+      await _registry.reconnectRequestsRef(myId).remove();
+      await _registry.peerDepartedRef(myId).remove();
+
+      await PairedDevicesService.instance.load();
+      for (final peer in PairedDevicesService.instance.devices) {
+        await _coordinator.clearSession(
+          myDeviceId: myId,
+          peerDeviceId: peer.deviceId,
+        );
+      }
+    } catch (e) {
+      debugPrint('Fresh-start sinyal temizliği başarısız: $e');
+    }
+  }
+
   /// Aynı cihazdan yeniden bağlanma akışı devam ediyor mu?
   bool isReconnectFlowActiveFor(String peerDeviceId) =>
       _approvingReconnectFromId == peerDeviceId ||

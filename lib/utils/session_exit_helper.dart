@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../main.dart';
@@ -100,6 +102,10 @@ class SessionExitHelper {
     } else if (context != null && context.mounted) {
       Navigator.of(context).popUntil((route) => route.isFirst);
     }
+
+    // Ana sayfaya dönünce, önceki oturumdan kalan bayat sinyal durumunu temizle
+    // ki bir sonraki bağlantı denemesi kilitlenmesin.
+    unawaited(RecentConnectionService.instance.resetForFreshStart());
 
     if (snackMessage != null) {
       final messengerContext = rootNavigatorKey.currentContext;

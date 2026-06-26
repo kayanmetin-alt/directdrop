@@ -47,6 +47,11 @@ import 'dev/screenshot_capture.dart';
 
 final GlobalKey<NavigatorState> rootNavigatorKey = GlobalKey<NavigatorState>();
 
+/// Ana sayfanın, üstündeki bir ekran kapandığında (oturum/transfer ekranı vb.)
+/// haberdar olup bayat bağlantı durumunu sıfırlayabilmesi için.
+final RouteObserver<PageRoute<dynamic>> appRouteObserver =
+    RouteObserver<PageRoute<dynamic>>();
+
 /// Açılışta ölümcül hata (ör. auth) olursa hata ekranını tetikler.
 final ValueNotifier<String?> startupErrorNotifier = ValueNotifier<String?>(null);
 
@@ -771,6 +776,7 @@ class _DirectDropAppState extends State<DirectDropApp> with WidgetsBindingObserv
   Widget build(BuildContext context) {
     return MaterialApp(
       navigatorKey: rootNavigatorKey,
+      navigatorObservers: [appRouteObserver],
       title: 'DirectDrop',
       debugShowCheckedModeBanner: false,
       scrollBehavior: Platform.isAndroid
