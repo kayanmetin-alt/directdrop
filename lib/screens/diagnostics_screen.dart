@@ -6,8 +6,10 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../services/device_identity_service.dart';
+import '../services/device_registry_service.dart';
 import '../services/firebase_auth_service.dart';
 import '../services/firebase_rtdb_service.dart';
 
@@ -36,7 +38,7 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
     _DiagStep('Anonim oturum (Auth)'),
     _DiagStep('Kimlik jetonu (ID token)'),
     _DiagStep('RTDB bağlantı durumu (.info/connected)'),
-    _DiagStep('RTDB yazma (kendi cihaz düğümü)'),
+    _DiagStep('Cihaz kaydı (gerçek uygulama akışı)'),
     _DiagStep('RTDB okuma (kendi cihaz düğümü)'),
     _DiagStep('Sunucu zaman damgası yazma'),
     _DiagStep('onDisconnect kaydı'),
@@ -53,7 +55,10 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
 
   String _describeError(Object e) {
     if (e is FirebaseException) {
-      return 'FirebaseException(code=${e.code}, plugin=${e.plugin})\n${e.message ?? ''}';
+      final msg = e.message ?? '';
+      // code=unknown'da message boş gelir; ham metin gerçek nedeni gösterir.
+      final extra = msg.isEmpty ? e.toString() : msg;
+      return 'FirebaseException(code=${e.code}, plugin=${e.plugin})\n$extra';
     }
     final text = e.toString();
     return '${e.runtimeType}: $text';
@@ -122,37 +127,43 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
 
     final db = FirebaseRtdbService.database;
 
-    // 4) .info/connected — auth gerektirmez; saf bağlantı testi.
+    // 4) .info/connected — websocket bağlantı durumu.
+    // ÖNEMLİ: `.get()` KULLANMA. iOS'ta `.get()` REST üzerinden okur ve
+    // `/.info/connected` için kural olmadığından her zaman permission-denied
+    // döner (yanlış negatif). Gerçek bağlantı durumu yalnızca dinleyiciyle
+    // (onValue) güvenilir okunur.
     await _set(3, _DiagStatus.running);
     try {
-      final snap = await db
+      final event = await db
           .ref('.info/connected')
-          .get()
+          .onValue
+          .firstWhere((e) => e.snapshot.value == true)
           .timeout(const Duration(seconds: 12));
-      await _set(3, _DiagStatus.ok, 'connected: ${snap.value}');
+      await _set(3, _DiagStatus.ok, 'connected: ${event.snapshot.value}');
     } catch (e) {
       await _set(3, _DiagStatus.fail, _describeError(e));
       firstFailure =
           firstFailure.isEmpty ? 'RTDB sunucusuna ulaşılamıyor.' : firstFailure;
     }
 
-    // 5) RTDB yazma — kuralların izin verdiği kendi cihaz düğümü.
+    // 5) Gerçek cihaz kaydı — uygulamanın kullandığı akışın aynısı.
+    // Kök `devices/{id}` düğümünü `ownerUid` ile yazar; güvenlik kuralları
+    // tam olarak bunu bekler. Bu adım OK ise RTDB yazma gerçekten çalışıyor.
     final deviceId = await DeviceIdentityService.instance.getDeviceId();
     final selfRef = db.ref('devices').child(deviceId);
     await _set(4, _DiagStatus.running);
     try {
-      await selfRef.child('diagnostics').set({
-        'ranAt': DateTime.now().millisecondsSinceEpoch,
-        'platform': Platform.operatingSystem,
-        'ownerUid': uid,
-      }).timeout(const Duration(seconds: 12));
-      await _set(4, _DiagStatus.ok, 'yazma başarılı: devices/$deviceId/diagnostics');
+      await DeviceRegistryService()
+          .registerCurrentDevice()
+          .timeout(const Duration(seconds: 15));
+      await _set(4, _DiagStatus.ok, 'kayıt başarılı: devices/$deviceId');
     } catch (e) {
       await _set(4, _DiagStatus.fail, _describeError(e));
-      firstFailure = firstFailure.isEmpty ? 'RTDB yazma reddedildi/başarısız.' : firstFailure;
+      firstFailure =
+          firstFailure.isEmpty ? 'Cihaz kaydı (RTDB yazma) başarısız.' : firstFailure;
     }
 
-    // 6) RTDB okuma
+    // 6) RTDB okuma — artık kendi düğümümüz var, sahibi biziz.
     await _set(5, _DiagStatus.running);
     try {
       final snap =
@@ -163,29 +174,26 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
       firstFailure = firstFailure.isEmpty ? 'RTDB okuma reddedildi/başarısız.' : firstFailure;
     }
 
-    // 7) Sunucu zaman damgası
+    // 7) Sunucu zaman damgası — sahip olduğumuz düğümde update.
     await _set(6, _DiagStatus.running);
     try {
       await selfRef
-          .child('diagnostics')
-          .child('serverTs')
-          .set(ServerValue.timestamp)
+          .update({'lastSeen': ServerValue.timestamp})
           .timeout(const Duration(seconds: 12));
       await _set(6, _DiagStatus.ok, 'ServerValue.timestamp yazıldı');
     } catch (e) {
       await _set(6, _DiagStatus.fail, _describeError(e));
     }
 
-    // 8) onDisconnect
+    // 8) onDisconnect — gerçek uygulamanın kurduğu handler ile aynı.
     await _set(7, _DiagStatus.running);
     try {
       await selfRef
-          .child('diagnostics')
-          .child('odTest')
+          .child('online')
           .onDisconnect()
-          .set(true)
+          .set(false)
           .timeout(const Duration(seconds: 12));
-      await selfRef.child('diagnostics').child('odTest').onDisconnect().cancel();
+      await selfRef.child('online').onDisconnect().cancel();
       await _set(7, _DiagStatus.ok, 'onDisconnect set+cancel başarılı');
     } catch (e) {
       await _set(7, _DiagStatus.fail, _describeError(e));
@@ -231,6 +239,22 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
     );
   }
 
+  Future<void> _shareReport() async {
+    try {
+      await SharePlus.instance.share(
+        ShareParams(
+          text: _buildReport(),
+          subject: 'DirectDrop Bağlantı Tanılama Raporu',
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Paylaşılamadı: $e')),
+      );
+    }
+  }
+
   Color _statusColor(_DiagStatus status, ThemeData theme) {
     return switch (status) {
       _DiagStatus.ok => Colors.green,
@@ -256,6 +280,11 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
       appBar: AppBar(
         title: const Text('Bağlantı Tanılama'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.ios_share),
+            tooltip: 'Raporu paylaş',
+            onPressed: _shareReport,
+          ),
           IconButton(
             icon: const Icon(Icons.copy_all),
             tooltip: 'Raporu kopyala',
@@ -323,6 +352,12 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
                     ),
                   ),
                   const SizedBox(width: 12),
+                  FilledButton.tonalIcon(
+                    onPressed: _shareReport,
+                    icon: const Icon(Icons.ios_share),
+                    label: const Text('Paylaş'),
+                  ),
+                  const SizedBox(width: 8),
                   OutlinedButton.icon(
                     onPressed: _copyReport,
                     icon: const Icon(Icons.copy_all),

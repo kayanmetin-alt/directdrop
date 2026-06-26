@@ -53,12 +53,14 @@ class DeviceRegistryService {
       // FCM token artık burada tutulmuyor; eski kayıtlardaki alanı temizle.
       'fcmToken': null,
     };
-    final snapshot = await ref.get();
-    if (snapshot.exists) {
-      await ref.update(payload);
-    } else {
-      await ref.set(payload);
-    }
+    // ÖNEMLİ: Yazmadan önce `ref.get()` YAPMA. `devices/$deviceId` okuma kuralı
+    // `data.child('ownerUid').val() === auth.uid` ister; var olmayan (yeni) bir
+    // düğümde `data` null olduğundan okuma `permission-denied` fırlatır ve tüm
+    // kayıt çöker (her yeni deviceId'de). `update()` ise hem yeni düğümü oluşturur
+    // (kural: `!data.exists() && newData.ownerUid === uid`) hem de bize ait mevcut
+    // düğümün alt düğümlerini (wakeRequests vb.) korur. Başkasına aitse reddedilir
+    // ve üstteki `registerCurrentDevice` yeni bir deviceId ile yeniden dener.
+    await ref.update(payload);
     if (fcmToken != null) {
       await _writeDeviceToken(deviceId, fcmToken);
     }
