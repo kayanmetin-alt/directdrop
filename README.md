@@ -114,7 +114,9 @@ Bu dosyayı hedef PC’ye kopyalayıp çift tıklayın — macOS’taki gibi kur
 
 1. Projeyi GitHub’a push edin
 2. Actions → **Build Windows Installer** → **Run workflow**
-3. Tamamlanınca **DirectDrop-Windows-Setup** artifact’ından `.exe` indirin
+3. Tamamlanınca [GitHub Releases](https://github.com/kayanmetin-alt/directdrop/releases/latest) sayfasından **DirectDrop-Setup-X.Y.Z.exe** dosyasını indirin
+
+> **Önemli:** Actions sekmesindeki artifact indirmeleri GitHub tarafından otomatik olarak **zip** paketlenir; zip’ten çıkarırken antivirüs yanlış uyarı verebilir. Kurulum dosyasını yalnızca Releases sayfasından doğrudan `.exe` olarak indirin — zip açmaya gerek yoktur.
 
 Kurulum sonrası uygulama `%LOCALAPPDATA%\Programs\DirectDrop\` altına yüklenir. İndirilen dosyalar: `%USERPROFILE%\Documents\DirectDrop\Downloads\`
 
