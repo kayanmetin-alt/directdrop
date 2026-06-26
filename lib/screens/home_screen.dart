@@ -9,6 +9,7 @@ import '../services/paired_devices_service.dart';
 import '../services/recent_connection_service.dart';
 import '../services/transfer_checkpoint_service.dart';
 import '../widgets/device_name_editor.dart';
+import 'diagnostics_screen.dart';
 import 'host_screen.dart';
 import 'join_screen.dart';
 import '../widgets/download_location_settings.dart';
@@ -91,6 +92,17 @@ class _HomeScreenState extends State<HomeScreen> {
         title: const Text('DirectDrop'),
         centerTitle: true,
         actions: [
+          IconButton(
+            icon: const Icon(Icons.health_and_safety_outlined),
+            tooltip: 'Bağlantı tanılama',
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => const DiagnosticsScreen(),
+                ),
+              );
+            },
+          ),
           IconButton(
             icon: const Icon(Icons.settings_outlined),
             tooltip: 'Ayarlar',
