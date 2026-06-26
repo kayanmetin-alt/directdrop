@@ -6,6 +6,7 @@ import 'package:firebase_database/firebase_database.dart';
 import '../models/paired_device.dart';
 import '../models/reconnect_request.dart';
 import 'device_identity_service.dart';
+import 'firebase_rtdb_service.dart';
 import 'desktop_background_service.dart';
 import 'notification_service.dart';
 import 'recent_connection_service.dart';
@@ -30,7 +31,7 @@ class WakeListenerService {
     _handledKeys.clear();
 
     final deviceId = await DeviceIdentityService.instance.getDeviceId();
-    final ref = FirebaseDatabase.instance
+    final ref = FirebaseRtdbService.database
         .ref('devices')
         .child(deviceId)
         .child('wakeRequests');

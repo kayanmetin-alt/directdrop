@@ -7,6 +7,7 @@ import '../utils/room_code_generator.dart';
 import 'app_check_service.dart';
 import 'device_identity_service.dart';
 import 'firebase_auth_service.dart';
+import 'firebase_rtdb_service.dart';
 
 /// Cihaza özel kalıcı davet kodu (QR). Yenilenene kadar aynı kalır.
 class PersistentInviteCodeService {
@@ -17,7 +18,7 @@ class PersistentInviteCodeService {
 
   static const _prefKey = 'persistent_invite_code';
 
-  final FirebaseDatabase _database = FirebaseDatabase.instance;
+  final FirebaseDatabase _database = FirebaseRtdbService.database;
   String? _cachedCode;
 
   DatabaseReference get _inviteCodes => _database.ref('inviteCodes');

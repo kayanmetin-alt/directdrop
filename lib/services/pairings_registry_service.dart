@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 
 import '../models/paired_device.dart';
 import 'firebase_auth_service.dart';
+import 'firebase_rtdb_service.dart';
 
 /// Eşleştirilmiş cihazları Firebase'de `pairings/{ownerUid}/{peerDeviceId}` altında
 /// tutar. RTDB kuralları bu kayıt üzerinden eş cihazların presence / pairConnect
@@ -12,7 +13,7 @@ class PairingsRegistryService {
 
   static final PairingsRegistryService instance = PairingsRegistryService._();
 
-  final FirebaseDatabase _database = FirebaseDatabase.instance;
+  final FirebaseDatabase _database = FirebaseRtdbService.database;
 
   DatabaseReference get _pairings => _database.ref('pairings');
 

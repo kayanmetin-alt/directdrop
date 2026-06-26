@@ -1,5 +1,4 @@
 import 'package:firebase_core/firebase_core.dart';
-import 'package:firebase_database/firebase_database.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'dart:async';
 import 'dart:io';
@@ -22,6 +21,7 @@ import 'services/device_identity_service.dart';
 import 'services/device_registry_service.dart';
 import 'services/download_directory_service.dart';
 import 'services/firebase_auth_service.dart';
+import 'services/firebase_rtdb_service.dart';
 import 'services/notification_service.dart';
 import 'services/paired_devices_service.dart';
 import 'services/pairings_registry_service.dart';
@@ -69,7 +69,7 @@ Future<void> main() async {
       options: DefaultFirebaseOptions.currentPlatform,
     ).timeout(const Duration(seconds: 12));
     try {
-      FirebaseDatabase.instance.setPersistenceEnabled(false);
+      FirebaseRtdbService.database.setPersistenceEnabled(false);
     } catch (e) {
       debugPrint('Firebase persistence kapatılamadı: $e');
     }
@@ -160,7 +160,7 @@ Future<void> _retryBootstrap() async {
         options: DefaultFirebaseOptions.currentPlatform,
       ).timeout(const Duration(seconds: 12));
       try {
-        FirebaseDatabase.instance.setPersistenceEnabled(false);
+        FirebaseRtdbService.database.setPersistenceEnabled(false);
       } catch (_) {}
       if (Platform.isIOS || Platform.isAndroid) {
         FirebaseMessaging.onBackgroundMessage(

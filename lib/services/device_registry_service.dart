@@ -9,11 +9,12 @@ import '../models/device_presence.dart';
 import '../models/paired_device.dart';
 import 'device_identity_service.dart';
 import 'firebase_auth_service.dart';
+import 'firebase_rtdb_service.dart';
 import 'pairings_registry_service.dart';
 
 class DeviceRegistryService {
   DeviceRegistryService({FirebaseDatabase? database})
-      : _database = database ?? FirebaseDatabase.instance;
+      : _database = database ?? FirebaseRtdbService.database;
 
   /// Firebase RTDB yeniden bağlanınca bekleyen istekleri tazelemek için.
   static void Function()? onFirebaseReconnected;

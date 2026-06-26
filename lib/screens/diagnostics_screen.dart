@@ -9,6 +9,7 @@ import 'package:flutter/services.dart';
 
 import '../services/device_identity_service.dart';
 import '../services/firebase_auth_service.dart';
+import '../services/firebase_rtdb_service.dart';
 
 /// Windows başta olmak üzere tüm platformlarda Firebase/RTDB bağlantısını
 /// adım adım test edip tam hata kodunu ekranda gösterir. "Sunucuya bağlanılamadı"
@@ -119,7 +120,7 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
       await _set(2, _DiagStatus.fail, _describeError(e));
     }
 
-    final db = FirebaseDatabase.instance;
+    final db = FirebaseRtdbService.database;
 
     // 4) .info/connected — auth gerektirmez; saf bağlantı testi.
     await _set(3, _DiagStatus.running);

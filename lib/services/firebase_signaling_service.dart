@@ -13,7 +13,7 @@ typedef SignalingCallback = FutureOr<void> Function(SignalingMessage message);
 
 class FirebaseSignalingService {
   FirebaseSignalingService({FirebaseDatabase? database})
-      : _database = database ?? FirebaseDatabase.instance;
+      : _database = database ?? FirebaseRtdbService.database;
 
   final FirebaseDatabase _database;
   StreamSubscription<DatabaseEvent>? _messagesSubscription;

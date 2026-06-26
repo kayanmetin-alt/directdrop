@@ -2,6 +2,8 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:flutter/foundation.dart';
 
+import 'firebase_rtdb_service.dart';
+
 /// Tek bir yeniden bağlanma oturumu (çift oda / çift tıklama önlenir).
 class PairConnectRole {
   const PairConnectRole._({
@@ -37,7 +39,7 @@ class PairConnectRole {
 
 class PairConnectCoordinator {
   PairConnectCoordinator({FirebaseDatabase? database})
-      : _database = database ?? FirebaseDatabase.instance;
+      : _database = database ?? FirebaseRtdbService.database;
 
   final FirebaseDatabase _database;
   static const _sessionMaxAge = Duration(minutes: 3);
