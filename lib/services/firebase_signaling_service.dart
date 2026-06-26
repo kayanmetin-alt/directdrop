@@ -86,7 +86,7 @@ class FirebaseSignalingService {
     required String hostAuthUid,
     required String persistentDeviceId,
   }) async {
-    final existing = await ref.get();
+    final existing = await FirebaseRtdbService.readOnce(ref);
     if (!existing.exists || existing.value is! Map) return;
 
     final data = Map<String, dynamic>.from(existing.value as Map);
@@ -123,7 +123,9 @@ class FirebaseSignalingService {
     await FirebaseRtdbService.ensureReady();
     final normalized = roomCode.trim().toUpperCase();
     try {
-      final snapshot = await _rooms.child(normalized).get();
+      final snapshot = await FirebaseRtdbService.readOnce(
+        _rooms.child(normalized),
+      );
       if (!snapshot.exists) {
         throw StateError('Oda bulunamadı veya süresi doldu. Tekrar deneyin.');
       }
@@ -162,7 +164,7 @@ class FirebaseSignalingService {
     await assertRoomJoinable(normalizedCode);
 
     _roomRef = _rooms.child(normalizedCode);
-    final snapshot = await _roomRef!.get();
+    final snapshot = await FirebaseRtdbService.readOnce(_roomRef!);
     if (!snapshot.exists) {
       throw StateError('Oda bulunamadı. Kodu kontrol edin.');
     }
@@ -202,48 +204,58 @@ class FirebaseSignalingService {
   }
 
   Future<String?> getHostPersistentId(String roomCode) async {
-    final snapshot =
-        await _rooms.child(roomCode).child('hostPersistentId').get();
+    final snapshot = await FirebaseRtdbService.readOnce(
+      _rooms.child(roomCode).child('hostPersistentId'),
+    );
     return snapshot.value as String?;
   }
 
   Future<String?> getGuestPersistentId(String roomCode) async {
-    final snapshot =
-        await _rooms.child(roomCode).child('guestPersistentId').get();
+    final snapshot = await FirebaseRtdbService.readOnce(
+      _rooms.child(roomCode).child('guestPersistentId'),
+    );
     return snapshot.value as String?;
   }
 
   Future<String?> getHostDeviceName(String roomCode) async {
-    final snapshot =
-        await _rooms.child(roomCode).child('hostDeviceName').get();
+    final snapshot = await FirebaseRtdbService.readOnce(
+      _rooms.child(roomCode).child('hostDeviceName'),
+    );
     return snapshot.value as String?;
   }
 
   Future<String?> getGuestDeviceName(String roomCode) async {
-    final snapshot =
-        await _rooms.child(roomCode).child('guestDeviceName').get();
+    final snapshot = await FirebaseRtdbService.readOnce(
+      _rooms.child(roomCode).child('guestDeviceName'),
+    );
     return snapshot.value as String?;
   }
 
   Future<String?> getHostDevicePlatform(String roomCode) async {
-    final snapshot =
-        await _rooms.child(roomCode).child('hostDevicePlatform').get();
+    final snapshot = await FirebaseRtdbService.readOnce(
+      _rooms.child(roomCode).child('hostDevicePlatform'),
+    );
     return snapshot.value as String?;
   }
 
   Future<String?> getGuestDevicePlatform(String roomCode) async {
-    final snapshot =
-        await _rooms.child(roomCode).child('guestDevicePlatform').get();
+    final snapshot = await FirebaseRtdbService.readOnce(
+      _rooms.child(roomCode).child('guestDevicePlatform'),
+    );
     return snapshot.value as String?;
   }
 
   Future<String?> getHostPeerId(String roomCode) async {
-    final snapshot = await _rooms.child(roomCode).child('hostPeerId').get();
+    final snapshot = await FirebaseRtdbService.readOnce(
+      _rooms.child(roomCode).child('hostPeerId'),
+    );
     return snapshot.value as String?;
   }
 
   Future<String?> getGuestPeerId(String roomCode) async {
-    final snapshot = await _rooms.child(roomCode).child('guestPeerId').get();
+    final snapshot = await FirebaseRtdbService.readOnce(
+      _rooms.child(roomCode).child('guestPeerId'),
+    );
     return snapshot.value as String?;
   }
 
@@ -344,8 +356,9 @@ class FirebaseSignalingService {
     if (_roomRef == null) return;
     _onMessage = onMessage;
 
-    final snapshot =
-        await _roomRef!.child('signaling').child(localPeerId).get();
+    final snapshot = await FirebaseRtdbService.readOnce(
+      _roomRef!.child('signaling').child(localPeerId),
+    );
     if (snapshot.exists && snapshot.value is Map) {
       final children = snapshot.children.toList()
         ..sort((a, b) {

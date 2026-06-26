@@ -10,6 +10,7 @@ import '../providers/transfer_session_controller.dart';
 import '../services/webrtc_service.dart';
 import 'device_identity_service.dart';
 import 'device_registry_service.dart';
+import 'firebase_rtdb_service.dart';
 import 'active_session_registry.dart';
 import 'paired_devices_service.dart';
 import 'paired_presence_service.dart';
@@ -292,7 +293,8 @@ class PairedAutoConnectService extends ChangeNotifier {
 
     final myId =
         _myDeviceId ?? await DeviceIdentityService.instance.getDeviceId();
-    final snapshot = await _registry.incomingPairRef(myId).get();
+    final snapshot =
+        await FirebaseRtdbService.readOnce(_registry.incomingPairRef(myId));
     if (!snapshot.exists || snapshot.value is! Map) return;
 
     final invites = Map<String, dynamic>.from(snapshot.value as Map);

@@ -1,4 +1,3 @@
-import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:flutter/foundation.dart';
 
@@ -90,9 +89,11 @@ class PairConnectCoordinator {
     required String peerDeviceId,
   }) async {
     try {
-      final snapshot = await sessionRef(myDeviceId, peerDeviceId).get();
+      final snapshot = await FirebaseRtdbService.readOnce(
+        sessionRef(myDeviceId, peerDeviceId),
+      );
       return _roleFromSnapshot(snapshot, myDeviceId);
-    } on FirebaseException catch (e) {
+    } catch (e) {
       debugPrint('pairConnect okunamadı: $e');
       return null;
     }

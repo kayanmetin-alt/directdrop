@@ -18,6 +18,7 @@ import 'device_registry_service.dart';
 import 'desktop_background_service.dart';
 import 'desktop_overlay_service.dart';
 import 'firebase_auth_service.dart';
+import 'firebase_rtdb_service.dart';
 import 'firebase_signaling_service.dart';
 import 'notification_service.dart';
 import 'pair_connect_coordinator.dart';
@@ -614,7 +615,8 @@ class RecentConnectionService extends ChangeNotifier {
 
   Future<void> _processExistingPeerDeparted(String myId) async {
     try {
-      final snapshot = await _registry.peerDepartedRef(myId).get();
+      final snapshot =
+          await FirebaseRtdbService.readOnce(_registry.peerDepartedRef(myId));
       if (!snapshot.exists || snapshot.value is! Map) return;
 
       final departed = Map<String, dynamic>.from(snapshot.value as Map);
@@ -646,7 +648,9 @@ class RecentConnectionService extends ChangeNotifier {
 
   Future<void> _processExistingReconnectRequests(String myId) async {
     try {
-      final snapshot = await _registry.reconnectRequestsRef(myId).get();
+      final snapshot = await FirebaseRtdbService.readOnce(
+        _registry.reconnectRequestsRef(myId),
+      );
       if (!snapshot.exists || snapshot.value is! Map) return;
 
       final requests = Map<String, dynamic>.from(snapshot.value as Map);
@@ -705,7 +709,8 @@ class RecentConnectionService extends ChangeNotifier {
 
   Future<void> _processExistingInvites(String myId) async {
     try {
-      final snapshot = await _registry.pairInvitesRef(myId).get();
+      final snapshot =
+          await FirebaseRtdbService.readOnce(_registry.pairInvitesRef(myId));
       if (!snapshot.exists || snapshot.value is! Map) return;
 
       final invites = Map<String, dynamic>.from(snapshot.value as Map);
@@ -947,11 +952,9 @@ class RecentConnectionService extends ChangeNotifier {
         );
       }
 
-      final inviteSnapshot = await _registry
-          .pairInvitesRef(myId)
-          .child(peerDeviceId)
-          .get()
-          .timeout(const Duration(seconds: 10));
+      final inviteSnapshot = await FirebaseRtdbService.readOnce(
+        _registry.pairInvitesRef(myId).child(peerDeviceId),
+      );
       if (_rejectionFromInviteSnapshot(inviteSnapshot) != null) {
         await _registry
             .pairInvitesRef(myId)
@@ -1106,11 +1109,9 @@ class RecentConnectionService extends ChangeNotifier {
 
   Future<String?> _readInviteRoomCode(String peerDeviceId) async {
     final myId = await DeviceIdentityService.instance.getDeviceId();
-    final snapshot = await _registry
-        .pairInvitesRef(myId)
-        .child(peerDeviceId)
-        .get()
-        .timeout(const Duration(seconds: 10));
+    final snapshot = await FirebaseRtdbService.readOnce(
+      _registry.pairInvitesRef(myId).child(peerDeviceId),
+    );
     final rejection = _rejectionFromInviteSnapshot(snapshot);
     if (rejection != null) throw rejection;
     return _roomCodeFromInviteSnapshot(snapshot);
@@ -1127,17 +1128,12 @@ class RecentConnectionService extends ChangeNotifier {
     final myId = await DeviceIdentityService.instance.getDeviceId();
     final ref = _registry.pairInvitesRef(myId).child(peerDeviceId);
 
-    final initial = await ref.get().timeout(const Duration(seconds: 10));
-    final rejection = _rejectionFromInviteSnapshot(initial);
-    if (rejection != null) throw rejection;
-
-    final existingCode = _roomCodeFromInviteSnapshot(
-      initial,
-      minCreatedAtMs: minInviteCreatedAtMs,
-      expectedReconnectCreatedAtMs: expectedReconnectCreatedAtMs,
-    );
-    if (existingCode != null) return existingCode;
-
+    // NOT: Burada `ref.get()` ile tek seferlik okuma YAPMIYORUZ. Bu cihaz zaten
+    // `pairInvites/{myId}` üzerinde sürekli dinleyici tuttuğu için, aynı yola
+    // `.get()` Windows'ta hiç tamamlanmaz (flutterfire #13482) ve onay beklemeyi
+    // 10 sn'de "Future not completed" hatasıyla iptal ederdi. Aşağıdaki `onValue`
+    // dinleyicisi abone olur olmaz mevcut değeri (varsa hazır oda kodu/red) ile
+    // tetiklenir; yani ilk durum da bu dinleyiciyle ele alınır.
     final completer = Completer<String?>();
     late final StreamSubscription<DatabaseEvent> sub;
     Timer? progressTimer;

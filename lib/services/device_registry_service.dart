@@ -285,14 +285,15 @@ class DeviceRegistryService {
   }
 
   Future<Map<String, dynamic>?> readDevice(String deviceId) async {
-    final snapshot = await _devices.child(deviceId).get();
+    final snapshot = await FirebaseRtdbService.readOnce(_devices.child(deviceId));
     if (!snapshot.exists || snapshot.value is! Map) return null;
     return Map<String, dynamic>.from(snapshot.value as Map);
   }
 
   /// Eşleştirilmiş cihazların çevrimiçi durumu — yalnızca `presence/` düğümünden.
   Future<Map<String, dynamic>?> readPresence(String deviceId) async {
-    final snapshot = await _presence.child(deviceId).get();
+    final snapshot =
+        await FirebaseRtdbService.readOnce(_presence.child(deviceId));
     if (!snapshot.exists || snapshot.value is! Map) return null;
     return Map<String, dynamic>.from(snapshot.value as Map);
   }

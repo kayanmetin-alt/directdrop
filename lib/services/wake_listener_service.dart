@@ -48,7 +48,7 @@ class WakeListenerService {
   }
 
   Future<void> _processPending(DatabaseReference ref) async {
-    final snapshot = await ref.get();
+    final snapshot = await FirebaseRtdbService.readOnce(ref);
     if (!snapshot.exists || snapshot.value is! Map) return;
 
     final requests = Map<String, dynamic>.from(snapshot.value as Map);

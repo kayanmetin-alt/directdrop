@@ -20,6 +20,27 @@ abstract final class FirebaseRtdbService {
         databaseURL: DefaultFirebaseOptions.currentPlatform.databaseURL,
       );
 
+  /// Tek seferlik okuma için güvenli yardımcı.
+  ///
+  /// `DatabaseReference.get()` (ve `once()`), aynı VEYA üst yol üzerinde aktif
+  /// bir `onValue`/`onChild*` dinleyicisi varken bazı `firebase_database`
+  /// sürümlerinde — özellikle Windows/masaüstü — hiçbir zaman tamamlanmaz
+  /// ("TimeoutException after 0:00:10 ... Future not completed").
+  /// Bkz. flutterfire #13482. Yeniden bağlanma akışı `pairInvites/{myId}`,
+  /// `reconnectRequests/{myId}` ve `pairConnect/{pairKey}` yollarını sürekli
+  /// dinlediği için bu yollardaki `.get()` çağrıları Windows'ta 10 sn askıda
+  /// kalıp isteği ~50-60 sn geciktiriyordu.
+  ///
+  /// Dinleyici tabanlı okuma bu hatadan etkilenmez: ilk olayı (mevcut değer)
+  /// alıp aboneliği kapatır. Var olmayan yol için de `exists == false` snapshot
+  /// ile hemen tamamlanır.
+  static Future<DataSnapshot> readOnce(
+    DatabaseReference ref, {
+    Duration timeout = const Duration(seconds: 12),
+  }) {
+    return ref.onValue.map((event) => event.snapshot).first.timeout(timeout);
+  }
+
   /// RTDB okuma/yazımından önce auth + App Check hazırlığını garanti eder.
   static Future<void> ensureReady() async {
     await FirebaseAuthService.instance.ensureSignedIn();
