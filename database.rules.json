@@ -50,7 +50,7 @@
     "inviteCodes": {
       "$code": {
         ".read": "auth != null && $code.matches(/^[A-Z0-9]{6,8}$/)",
-        ".write": "auth != null && ((!data.exists() && newData.child('ownerUid').val() === auth.uid) || (data.child('ownerUid').val() === auth.uid))",
+        ".write": "auth != null && ((!data.exists() && newData.child('ownerUid').val() === auth.uid) || (data.child('ownerUid').val() === auth.uid) || (newData.child('ownerUid').val() === auth.uid && root.child('devices').child(newData.child('deviceId').val()).child('ownerUid').val() === auth.uid))",
         ".validate": "newData.hasChildren(['deviceId', 'ownerUid'])"
       }
     },

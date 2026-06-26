@@ -9,12 +9,16 @@ class RoomCodeDisplay extends StatelessWidget {
     super.key,
     required this.roomCode,
     this.embedded = false,
+    this.isDeviceInvite = false,
   });
 
   final String roomCode;
 
   /// Kart içinde kullanıldığında dış Card ve fazla boşluk kaldırılır.
   final bool embedded;
+
+  /// `true` → cihaz davet QR'ı; `false` → geçici oda QR'ı (Transfer Başlat).
+  final bool isDeviceInvite;
 
   Future<void> _copyRoomCode(BuildContext context) async {
     await Clipboard.setData(ClipboardData(text: roomCode));
@@ -62,7 +66,9 @@ class RoomCodeDisplay extends StatelessWidget {
         SizedBox(height: isMobile ? 16 : 24),
         RepaintBoundary(
           child: QrImageView(
-            data: roomCode,
+            data: isDeviceInvite
+                ? 'directdrop://device/$roomCode'
+                : 'directdrop://join/$roomCode',
             version: QrVersions.auto,
             size: qrSize,
             backgroundColor: Colors.white,

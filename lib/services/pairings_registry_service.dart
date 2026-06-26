@@ -53,7 +53,16 @@ class PairingsRegistryService {
       await _pairings.child(ownerUid).child(peerDeviceId).set(true);
     } catch (e, stack) {
       debugPrint('Eşleşme eklenemedi: $e\n$stack');
+      rethrow;
     }
+  }
+
+  /// Yeniden bağlanma öncesi RTDB kurallarının gerektirdiği eşleşme kaydını yazar.
+  Future<void> ensurePeerForReconnect(String peerDeviceId) async {
+    if (peerDeviceId.isEmpty) {
+      throw StateError('Geçersiz cihaz kimliği.');
+    }
+    await addPeer(peerDeviceId);
   }
 
   Future<void> removePeer(String peerDeviceId) async {

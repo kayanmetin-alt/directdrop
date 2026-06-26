@@ -242,6 +242,15 @@ class WebRtcService {
           break;
       }
     };
+
+    // Kanal, handler eklenmeden önce açılmış olabilir (özellikle alıcı taraf /
+    // iOS). Bu durumda `onDataChannelState` "open" olayı bir daha gelmez ve
+    // bağlantı hiç "connected" işaretlenmez — guest sonsuza dek "bağlanıyor"da
+    // kalır. Mevcut durumu okuyup gerekiyorsa hemen connected'a geç.
+    if (channel.state == RTCDataChannelState.RTCDataChannelOpen) {
+      _stopOfferRetry();
+      _setState(WebRtcConnectionState.connected);
+    }
   }
 
   Future<void> handleSignalingMessage(SignalingMessage message) async {

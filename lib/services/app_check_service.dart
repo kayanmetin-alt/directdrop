@@ -23,12 +23,19 @@ class AppCheckService {
   static bool get _isSupported =>
       Platform.isAndroid || Platform.isIOS || Platform.isMacOS;
 
-  static Future<void> activate() async {
-    if (!_isSupported) return;
+  static Future<void>? _activation;
+
+  /// RTDB yazımından önce çağrılır; App Check etkinleştirmesinin bitmesini bekler.
+  static Future<void> ensureActivated() {
+    if (!_isSupported) return Future<void>.value();
+    return _activation ??= _activateInternal();
+  }
+
+  static Future<void> activate() => ensureActivated();
+
+  static Future<void> _activateInternal() async {
     try {
       await FirebaseAppCheck.instance.activate(
-        // Debug derlemelerinde debug provider kullan (Console'a debug jetonu
-        // eklenmelidir). Release'de platform attestation sağlayıcıları.
         providerAndroid: kDebugMode
             ? const AndroidDebugProvider()
             : const AndroidPlayIntegrityProvider(),
@@ -36,6 +43,11 @@ class AppCheckService {
             ? const AppleDebugProvider()
             : const AppleDeviceCheckProvider(),
       );
+      try {
+        await FirebaseAppCheck.instance.getToken();
+      } catch (e) {
+        debugPrint('App Check jetonu alınamadı (devam): $e');
+      }
     } catch (e) {
       debugPrint('App Check etkinleştirilemedi: $e');
     }

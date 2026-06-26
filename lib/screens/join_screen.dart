@@ -8,6 +8,7 @@ import 'package:provider/provider.dart';
 import '../models/paired_device.dart';
 import '../providers/transfer_session_controller.dart';
 import '../services/active_session_registry.dart';
+import '../services/firebase_signaling_service.dart';
 import '../services/persistent_invite_code_service.dart';
 import '../services/paired_auto_connect_service.dart';
 import '../services/paired_devices_service.dart';
@@ -84,7 +85,8 @@ class _JoinScreenState extends State<JoinScreen> {
   Future<void> _join({bool fromQr = false}) async {
     if (_joinInProgress) return;
 
-    final code = InviteCodeParser.normalize(_codeController.text);
+    final payload = InviteCodeParser.parse(_codeController.text);
+    final code = payload.code;
     _codeController.text = code;
 
     if (fromQr) {
@@ -114,39 +116,71 @@ class _JoinScreenState extends State<JoinScreen> {
     }
 
     try {
-      final lookup = await PersistentInviteCodeService.instance.lookup(code);
-      if (lookup != null) {
-        setState(() {
-          _pendingPeerName = lookup.displayName;
-          _waitingForApproval = true;
-          _statusMessage = '${lookup.displayName} cihazına istek gönderiliyor…';
-        });
+      if (payload.kind == InviteCodeKind.device ||
+          payload.kind == InviteCodeKind.auto) {
+        DeviceInviteLookup? lookup;
+        for (var attempt = 0; attempt < 3; attempt++) {
+          lookup = await PersistentInviteCodeService.instance.lookup(code);
+          if (lookup != null) break;
+          if (attempt < 2) {
+            if (mounted) {
+              setState(() {
+                _statusMessage = 'Cihaz kodu aranıyor… (${attempt + 2}/3)';
+              });
+            }
+            await Future<void>.delayed(const Duration(milliseconds: 900));
+          }
+        }
+        if (lookup != null) {
+          final peer = lookup;
+          setState(() {
+            _pendingPeerName = peer.displayName;
+            _waitingForApproval = true;
+            _statusMessage = '${peer.displayName} cihazına istek gönderiliyor…';
+          });
 
-        final controller =
-            await RecentConnectionService.instance.connectViaDeviceInvite(
-          lookup,
-          onProgress: (message) {
-            if (!mounted) return;
-            setState(() => _statusMessage = message);
-          },
-        );
-        if (!mounted) return;
-        _controller = controller;
-        ActiveSessionRegistry.instance.register(controller);
-        setState(() {
-          _joinInProgress = false;
-          _waitingForApproval = false;
-          _statusMessage = null;
-        });
-        return;
+          final controller =
+              await RecentConnectionService.instance.connectViaDeviceInvite(
+            peer,
+            onProgress: (message) {
+              if (!mounted) return;
+              setState(() => _statusMessage = message);
+            },
+          );
+          if (!mounted) return;
+          _controller = controller;
+          ActiveSessionRegistry.instance.register(controller);
+          setState(() {
+            _joinInProgress = false;
+            _waitingForApproval = false;
+            _statusMessage = null;
+          });
+          return;
+        }
+
+        if (payload.kind == InviteCodeKind.device) {
+          setState(() {
+            _error =
+                'Cihaz QR kodu bulunamadı. Karşı cihazda DirectDrop açık olsun, '
+                'ana ekranda QR görünsün veya birkaç saniye bekleyip tekrar deneyin.';
+            _joinInProgress = false;
+            _waitingForApproval = false;
+            _statusMessage = null;
+            _pendingPeerName = null;
+          });
+          return;
+        }
       }
 
-      // QR ile taranan kod cihaz davet kodudur; geçici oda kodu değildir.
-      if (fromQr) {
+      // Geçici oda (Transfer Başlat) veya düz kod — açık odaya katıl.
+      try {
+        await FirebaseSignalingService().assertRoomJoinable(code);
+      } on StateError catch (e) {
         setState(() {
-          _error =
-              'Cihaz QR kodu bulunamadı. Karşı cihazda DirectDrop açık olsun, '
-              'ana ekranda QR görünsün veya birkaç saniye bekleyip tekrar deneyin.';
+          _error = payload.kind == InviteCodeKind.auto
+              ? 'Cihaz veya oda kodu bulunamadı. Karşı cihazda uygulama açık '
+                  'olsun; Transfer Başlat veya Cihaz QR ekranını kullanın.'
+              : e.message;
           _joinInProgress = false;
           _waitingForApproval = false;
           _statusMessage = null;

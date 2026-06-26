@@ -23,6 +23,7 @@ import 'notification_service.dart';
 import 'pair_connect_coordinator.dart';
 import 'paired_auto_connect_service.dart';
 import 'paired_devices_service.dart';
+import 'pairings_registry_service.dart';
 import 'persistent_invite_code_service.dart';
 import 'startup_gate.dart';
 
@@ -894,36 +895,40 @@ class RecentConnectionService extends ChangeNotifier {
     String myId,
     String peerDeviceId,
   ) async {
-    final role = await _coordinator.readRole(
-      myDeviceId: myId,
-      peerDeviceId: peerDeviceId,
-    );
-    if (role != null && !await _isRoomJoinableQuiet(role.roomCode)) {
-      await _coordinator.clearSession(
+    try {
+      final role = await _coordinator.readRole(
         myDeviceId: myId,
         peerDeviceId: peerDeviceId,
       );
-    }
+      if (role != null && !await _isRoomJoinableQuiet(role.roomCode)) {
+        await _coordinator.clearSession(
+          myDeviceId: myId,
+          peerDeviceId: peerDeviceId,
+        );
+      }
 
-    final inviteSnapshot = await _registry
-        .pairInvitesRef(myId)
-        .child(peerDeviceId)
-        .get()
-        .timeout(const Duration(seconds: 10));
-    if (_rejectionFromInviteSnapshot(inviteSnapshot) != null) {
-      await _registry
+      final inviteSnapshot = await _registry
           .pairInvitesRef(myId)
           .child(peerDeviceId)
-          .remove();
-      return;
-    }
+          .get()
+          .timeout(const Duration(seconds: 10));
+      if (_rejectionFromInviteSnapshot(inviteSnapshot) != null) {
+        await _registry
+            .pairInvitesRef(myId)
+            .child(peerDeviceId)
+            .remove();
+        return;
+      }
 
-    final inviteCode = _roomCodeFromInviteSnapshot(inviteSnapshot);
-    if (inviteCode != null && !await _isRoomJoinableQuiet(inviteCode)) {
-      await _registry.clearPairInvitesBetween(
-        myDeviceId: myId,
-        peerDeviceId: peerDeviceId,
-      );
+      final inviteCode = _roomCodeFromInviteSnapshot(inviteSnapshot);
+      if (inviteCode != null && !await _isRoomJoinableQuiet(inviteCode)) {
+        await _registry.clearPairInvitesBetween(
+          myDeviceId: myId,
+          peerDeviceId: peerDeviceId,
+        );
+      }
+    } catch (e) {
+      debugPrint('Bayat yeniden bağlanma durumu temizlenemedi: $e');
     }
   }
 
@@ -935,6 +940,11 @@ class RecentConnectionService extends ChangeNotifier {
     await _registerWithTimeout();
 
     peer = await _resolvePeerForConnect(peer);
+
+    await PairedDevicesService.instance.load();
+    await PairingsRegistryService.instance.ensurePeerForReconnect(
+      peer.deviceId,
+    );
 
     final myId = await DeviceIdentityService.instance.getDeviceId();
     final identity = DeviceIdentityService.instance;

@@ -20,6 +20,7 @@ import '../services/firebase_auth_service.dart';
 import '../services/firebase_signaling_service.dart';
 import '../services/pair_connect_coordinator.dart';
 import '../services/paired_devices_service.dart';
+import '../services/pairings_registry_service.dart';
 import '../services/mobile_transfer_keepalive_service.dart';
 import '../services/desktop_background_service.dart';
 import '../services/desktop_overlay_service.dart';
@@ -495,21 +496,54 @@ class TransferSessionController extends ChangeNotifier {
   void _scheduleConnectionWatch() {
     _connectionWatchTimer?.cancel();
     final generation = ++_connectionWatchGeneration;
-    // Re-offer mekanizması ~12 sn içinde bağlar; 12 sn'de hâlâ yoksa tazele.
-    _connectionWatchTimer = Timer(const Duration(seconds: 12), () {
-      unawaited(_onConnectionWatchTimeout(generation));
+    // İlk bağlantı için ICE/TURN'e zaman tanı (relay yavaş olabilir). Re-offer
+    // mekanizması ~9 sn sürer; 15 sn'de hâlâ bağlanmadıysa tazelemeyi dene.
+    _connectionWatchTimer = Timer(const Duration(seconds: 15), () {
+      unawaited(_onConnectionWatchTimeout(generation, attempt: 1));
     });
   }
 
-  Future<void> _onConnectionWatchTimeout(int generation) async {
+  /// Bağlantı zaman aşımında tek seferde "başarısız" demek yerine, sınırlı
+  /// sayıda yeniden deneyip her denemeye oturması için süre tanır. Böylece
+  /// guest tarafı erken "bağlanılamadı" ekranına düşmez ve host ile karşılıklı
+  /// yeniden bağlanma fırtınası oluşmaz.
+  Future<void> _onConnectionWatchTimeout(
+    int generation, {
+    required int attempt,
+  }) async {
     if (_disposed || generation != _connectionWatchGeneration) return;
     if (isConnected) return;
+    if (_peerHasLeft || _userInitiatedLeave) return;
 
-    debugPrint('WebRTC ilk bağlantı zaman aşımı — yeniden denenecek.');
-    await reconnectIfNeeded();
+    // Karşı cihaz gerçekten çevrimdışıysa beklemeden ayrıldı say.
+    if (await _isPeerOffline()) {
+      if (_disposed || generation != _connectionWatchGeneration) return;
+      _markPeerHasLeft();
+      return;
+    }
+
+    const maxAttempts = 4;
+    debugPrint(
+      'WebRTC bağlantı zaman aşımı (deneme $attempt/$maxAttempts) — tazeleniyor.',
+    );
+    await reconnectIfNeeded(force: true);
+
+    // Yeniden bağlanmanın oturmasını bekle (offer/answer + ICE ~ birkaç sn).
+    for (var i = 0; i < 80; i++) {
+      if (_disposed || generation != _connectionWatchGeneration) return;
+      if (isConnected) return;
+      if (_peerHasLeft || _userInitiatedLeave) return;
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+    }
 
     if (_disposed || generation != _connectionWatchGeneration) return;
     if (isConnected) return;
+    if (_peerHasLeft || _userInitiatedLeave) return;
+
+    if (attempt < maxAttempts) {
+      unawaited(_onConnectionWatchTimeout(generation, attempt: attempt + 1));
+      return;
+    }
 
     _errorMessage =
         'Karşı cihazla bağlantı kurulamadı. Her iki tarafta uygulama açık mı kontrol edin.';
@@ -551,6 +585,7 @@ class TransferSessionController extends ChangeNotifier {
       displayName: remoteName ?? 'Cihaz',
       platform: platform,
     );
+    await PairingsRegistryService.instance.ensurePeerForReconnect(remoteId);
     _pairSaved = true;
   }
 

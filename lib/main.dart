@@ -175,7 +175,6 @@ Future<void> _retryBootstrap() async {
 Future<void> _startBackgroundServices() async {
   try {
     await PairedDevicesService.instance.load();
-    unawaited(PersistentInviteCodeService.instance.resyncCurrentMapping());
     unawaited(PairingsRegistryService.instance.syncAll(
       PairedDevicesService.instance.devices,
     ));
@@ -189,8 +188,9 @@ Future<void> _startBackgroundServices() async {
       await DesktopBackgroundService.instance.load();
       await DesktopBackgroundService.instance.initialize();
     }
-    unawaited(PersistentInviteCodeService.instance.getOrCreate());
+    // Cihaz kaydı tamamlanmadan QR kodu sunucuya yazılamaz.
     await RecentConnectionService.instance.ensureListening();
+    await PersistentInviteCodeService.instance.getOrCreate();
     unawaited(PairedAutoConnectService.instance.ensureRunning());
     unawaited(WakeListenerService.instance.ensureRunning());
   } catch (e, stack) {

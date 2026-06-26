@@ -185,6 +185,8 @@ class PairedDevicesService extends ChangeNotifier {
 
     await _persist();
     notifyListeners();
+    await PairingsRegistryService.instance.removePeer(oldDeviceId);
+    await PairingsRegistryService.instance.addPeer(newDeviceId);
   }
 
   Future<void> _persist() async {

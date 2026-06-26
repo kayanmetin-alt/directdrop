@@ -9,6 +9,7 @@ import '../models/device_presence.dart';
 import '../models/paired_device.dart';
 import 'device_identity_service.dart';
 import 'firebase_auth_service.dart';
+import 'pairings_registry_service.dart';
 
 class DeviceRegistryService {
   DeviceRegistryService({FirebaseDatabase? database})
@@ -309,11 +310,20 @@ class DeviceRegistryService {
       await ref.remove();
     } catch (_) {}
     final createdAt = DateTime.now().millisecondsSinceEpoch;
-    await ref.set({
+    final payload = {
       'fromDeviceName': fromDeviceName,
       'fromAuthUid': fromAuthUid,
       'clientCreatedAt': createdAt,
-    });
+    };
+    try {
+      await ref.set(payload);
+    } on FirebaseException catch (e) {
+      if (e.code != 'permission-denied') rethrow;
+      await PairingsRegistryService.instance.ensurePeerForReconnect(
+        targetDeviceId,
+      );
+      await ref.set(payload);
+    }
 
     // RTDB wake → Cloud Function FCM push (uygulama kapalıyken bile bildirim).
     try {

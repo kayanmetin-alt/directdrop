@@ -30,6 +30,8 @@ class _MyDeviceQrCardState extends State<MyDeviceQrCard> {
     try {
       final code = await _service.getOrCreate();
       if (mounted) setState(() => _code = code);
+    } catch (e) {
+      debugPrint('Cihaz QR kodu yüklenemedi: $e');
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -124,7 +126,11 @@ class _MyDeviceQrCardState extends State<MyDeviceQrCard> {
                 ? (code != null
                     ? Padding(
                         padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                        child: RoomCodeDisplay(roomCode: code, embedded: true),
+                        child: RoomCodeDisplay(
+                          roomCode: code,
+                          embedded: true,
+                          isDeviceInvite: true,
+                        ),
                       )
                     : const Padding(
                         padding: EdgeInsets.all(24),
