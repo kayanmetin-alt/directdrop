@@ -23,7 +23,11 @@ UninstallDisplayIcon={app}\{#MyAppExeName}
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
-PrivilegesRequired=lowest
+; WebRTC P2P icin Windows Guvenlik Duvari kurali eklenir; bu islem yonetici
+; yetkisi gerektirir. Yetki yoksa kullanici kurulumu da kabul edilir (kural
+; o durumda atlanir, uygulama ilk acilista guvenlik duvari istemi gosterir).
+PrivilegesRequired=admin
+PrivilegesRequiredOverridesAllowed=dialog
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0
@@ -48,7 +52,17 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: de
 
 [Run]
 Filename: "{tmp}\vc_redist.x64.exe"; Parameters: "/install /quiet /norestart"; StatusMsg: "Visual C++ calisma zamani kuruluyor..."; Check: VCRedistNeedsInstall; Flags: waituntilterminated
+; WebRTC eslestirme/transfer trafigi icin guvenlik duvari istisnalari (gelen+giden, TCP+UDP, tum profiller).
+; Onceki kurulumdan kalan ayni isimli kurallari once temizle (cift kayit olusmasin).
+Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""DirectDrop"""; Flags: runhidden; Check: IsAdminInstallMode
+Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""DirectDrop"" dir=in action=allow program=""{app}\{#MyAppExeName}"" enable=yes profile=any protocol=tcp"; StatusMsg: "Guvenlik duvari kurali ekleniyor..."; Flags: runhidden; Check: IsAdminInstallMode
+Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""DirectDrop"" dir=in action=allow program=""{app}\{#MyAppExeName}"" enable=yes profile=any protocol=udp"; Flags: runhidden; Check: IsAdminInstallMode
+Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""DirectDrop"" dir=out action=allow program=""{app}\{#MyAppExeName}"" enable=yes profile=any protocol=tcp"; Flags: runhidden; Check: IsAdminInstallMode
+Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""DirectDrop"" dir=out action=allow program=""{app}\{#MyAppExeName}"" enable=yes profile=any protocol=udp"; Flags: runhidden; Check: IsAdminInstallMode
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent
+
+[UninstallRun]
+Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""DirectDrop"""; Flags: runhidden; RunOnceId: "DelDirectDropFwRule"; Check: IsAdminInstallMode
 
 [Code]
 function VCRedistNeedsInstall: Boolean;

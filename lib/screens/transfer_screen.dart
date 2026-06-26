@@ -130,24 +130,6 @@ class _TransferScreenState extends State<TransferScreen>
           userInitiatedDisconnect: false,
         ),
       );
-      return;
-    }
-
-    if (_controller.hadSuccessfulConnection &&
-        !_controller.isConnected &&
-        !_controller.isReconnecting &&
-        !_controller.isBackgrounded &&
-        _controller.connectionState == WebRtcConnectionState.failed) {
-      _handledPeerLeft = true;
-      unawaited(
-        SessionExitHelper.leaveAndGoHome(
-          controller: _controller,
-          peerDeviceId: widget.peerDeviceId ?? _controller.peerDeviceId,
-          context: context,
-          snackMessage: '$peerLabel bağlantıyı kapattı',
-          userInitiatedDisconnect: false,
-        ),
-      );
     }
   }
 
@@ -354,6 +336,40 @@ class _TransferScreenState extends State<TransferScreen>
     );
   }
 
+  bool _showManualReconnectAction(TransferSessionController controller) {
+    if (controller.isConnected ||
+        controller.peerHasLeft ||
+        controller.userInitiatedLeave) {
+      return false;
+    }
+    return controller.connectionState == WebRtcConnectionState.disconnected ||
+        controller.connectionState == WebRtcConnectionState.failed;
+  }
+
+  Future<void> _manualReconnect() async {
+    await _controller.manualReconnect();
+  }
+
+  Widget? _buildConnectionTrailing(TransferSessionController controller) {
+    if (!_showManualReconnectAction(controller)) return null;
+
+    if (controller.isReconnecting) {
+      return const Padding(
+        padding: EdgeInsets.only(right: 4),
+        child: SizedBox(
+          width: 22,
+          height: 22,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
+      );
+    }
+
+    return TextButton(
+      onPressed: _manualReconnect,
+      child: const Text('Yeniden bağlan'),
+    );
+  }
+
   List<TransferFileItem> _awaitingIncomingApproval(
     List<TransferFileItem> items,
   ) {
@@ -416,39 +432,15 @@ class _TransferScreenState extends State<TransferScreen>
                     )
                   : Icon(
                       _controller.isConnected ? Icons.link : Icons.link_off,
+                      color: _controller.isConnected
+                          ? null
+                          : Theme.of(context).colorScheme.error,
                     ),
               title: Text(_connectionLabel(_controller.connectionState)),
               subtitle: Text('Oda ${session.roomCode}'),
+              trailing: _buildConnectionTrailing(_controller),
             ),
           ),
-          if (!_controller.isConnected &&
-              _controller.isPaired &&
-              !_controller.userInitiatedLeave &&
-              !_controller.peerHasLeft) ...[
-            const SizedBox(height: 8),
-            Card(
-              color: Theme.of(context).colorScheme.secondaryContainer,
-              child: Padding(
-                padding: const EdgeInsets.all(12),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        _controller.isReconnecting
-                            ? 'Bağlantı geri yükleniyor…'
-                            : 'Bağlantı kesildi. Yeniden bağlanabilirsiniz.',
-                      ),
-                    ),
-                    if (!_controller.isReconnecting)
-                      TextButton(
-                        onPressed: _controller.reconnectIfNeeded,
-                        child: const Text('Yeniden bağlan'),
-                      ),
-                  ],
-                ),
-              ),
-            ),
-          ],
           if (showActiveSection) ...[
             const SizedBox(height: 16),
             Text(
@@ -468,7 +460,7 @@ class _TransferScreenState extends State<TransferScreen>
             focusNode: _sendButtonFocus,
             autofocus: false,
             onPressed:
-                _sendButtonReady && _controller.isConnected && !_sending
+                _sendButtonReady && _controller.canTransferFiles && !_sending
                     ? _pickAndSend
                     : null,
             icon: _sending
@@ -480,7 +472,23 @@ class _TransferScreenState extends State<TransferScreen>
                 : const Icon(Icons.attach_file),
             label: const Text('Dosya Gönder'),
           ),
-          if (DesktopFileDropOverlay.isSupported && _controller.isConnected) ...[
+          if (_sendButtonReady &&
+              !_controller.canTransferFiles &&
+              !_sending &&
+              !_controller.peerHasLeft) ...[
+            const SizedBox(height: 6),
+            Text(
+              _controller.isReconnecting
+                  ? 'Bağlantı kuruluyor…'
+                  : 'Dosya göndermek için önce bağlantıyı yenileyin.',
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+            ),
+          ],
+          if (DesktopFileDropOverlay.isSupported &&
+              _controller.canTransferFiles) ...[
             const SizedBox(height: 8),
             Text(
               'veya dosyaları bu pencereye sürükleyip bırakın',
@@ -644,7 +652,7 @@ class _TransferScreenState extends State<TransferScreen>
             ],
           ),
           body: DesktopFileDropOverlay(
-            enabled: _controller.isConnected && !_sending,
+            enabled: _controller.canTransferFiles && !_sending,
             onFilesDropped: _sendPaths,
             child: DesktopCenteredLayout(
               maxWidth: 820,

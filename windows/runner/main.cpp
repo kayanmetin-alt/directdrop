@@ -26,7 +26,9 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
 
   FlutterWindow window(project);
   Win32Window::Point origin(10, 10);
-  Win32Window::Size size(1280, 720);
+  // Telefon benzeri dikdortgen pencere (DesktopWindowService varsayilani ile
+  // ayni). Boylece acilista genis pencere acilip sonra kuculme titremesi olmaz.
+  Win32Window::Size size(440, 780);
   if (!window.Create(L"DirectDrop", origin, size)) {
     return EXIT_FAILURE;
   }

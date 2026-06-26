@@ -797,6 +797,8 @@ class DesktopOverlayService extends ChangeNotifier {
                       ? 'Onay bekliyor'
                       : 'Başlatılıyor')
                   : row.status,
+              'canOpen': row.phase == _PanelFilePhase.completed &&
+                  (row.localPath?.isNotEmpty ?? false),
             },
         ],
       };
@@ -938,6 +940,9 @@ class DesktopOverlayService extends ChangeNotifier {
         onRejectAllFiles?.call();
       case 'files_open':
         await _openReceivedFiles();
+        await dismissPanelsUiOnly();
+      case 'file_open':
+        await _openSingleReceivedFile(args['fileId'] as String? ?? '');
       case 'open_main':
         onOpenMainApp?.call();
       case 'panel_dismiss':
@@ -947,7 +952,7 @@ class DesktopOverlayService extends ChangeNotifier {
 
   /// Panelde tamamlanan alınan dosyaları açar/gösterir. Tek dosyada dosyayı
   /// dosya yöneticisinde seçili gösterir; birden çoksa indirme klasörünü açar.
-  /// Panel açık kalır; kullanıcı X ile kapatır.
+  /// Çağıran `files_open` aksiyonunda paneli kapatır.
   Future<void> _openReceivedFiles() async {
     final paths = _panelFiles.values
         .where((r) =>
@@ -962,5 +967,14 @@ class DesktopOverlayService extends ChangeNotifier {
     } else {
       await FileLocationOpener.openDownloadsFolder(File(paths.first).parent.path);
     }
+  }
+
+  /// Tek dosyayı açar/gösterir; panel açık kalır.
+  Future<void> _openSingleReceivedFile(String fileId) async {
+    if (fileId.isEmpty) return;
+    final row = _panelFiles[fileId];
+    final path = row?.localPath;
+    if (path == null || path.isEmpty) return;
+    await FileLocationOpener.revealSavedFile(path);
   }
 }

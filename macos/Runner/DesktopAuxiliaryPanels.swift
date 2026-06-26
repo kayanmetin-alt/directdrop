@@ -424,7 +424,8 @@ private final class AuxiliaryPanel: NSPanel {
     let signature = shown.map { file -> String in
       let id = file["id"] as? String ?? ""
       let phase = file["phase"] as? String ?? "pending"
-      return "\(id):\(phase)"
+      let canOpen = file["canOpen"] as? Bool ?? false
+      return "\(id):\(phase):\(canOpen)"
     }.joined(separator: "|") + ";bulk=\(showBulk);open=\(showOpen)"
 
     // Yapı aynı → yalnızca ilerleme çubuklarını güncelle, paneli yeniden kurma.
@@ -622,11 +623,18 @@ private final class AuxiliaryPanel: NSPanel {
     attachRow(row, height: Self.kRowHeight)
   }
 
-  /// Onaylanmış dosya: tek satır → [ad ...]  [========== ilerleme çubuğu ==========]
+  /// Onaylanmış dosya: aktif → [ad ...] [=======]; tamamlandı → [ad ...] [Aç]
   private func addInlineProgressRow(_ item: [String: Any]) {
     let id = item["id"] as? String ?? ""
     let name = item["name"] as? String ?? "Dosya"
     let phase = item["phase"] as? String ?? "transferring"
+    let canOpen = item["canOpen"] as? Bool ?? false
+
+    if phase == "completed" && canOpen && !id.isEmpty {
+      addCompletedFileRow(name: name, fileId: id)
+      return
+    }
+
     var progress = item["progress"] as? Double ?? 0
     if phase == "completed" { progress = 1 }
 
@@ -657,6 +665,38 @@ private final class AuxiliaryPanel: NSPanel {
       label.trailingAnchor.constraint(lessThanOrEqualTo: bar.leadingAnchor, constant: -12),
     ])
     if !id.isEmpty { fileProgressBars[id] = bar }
+    attachRow(row, height: Self.kRowHeight)
+  }
+
+  /// Tamamlanan alınan dosya: [ad ...] [Aç]
+  private func addCompletedFileRow(name: String, fileId: String) {
+    let row = NSView()
+    row.translatesAutoresizingMaskIntoConstraints = false
+
+    let label = makeNameLabel(name)
+    label.font = .systemFont(ofSize: 12, weight: .medium)
+
+    let openBtn = NSButton(title: "Aç", target: nil, action: nil)
+    openBtn.bezelStyle = .rounded
+    openBtn.controlSize = .small
+    openBtn.font = .systemFont(ofSize: 12, weight: .medium)
+    openBtn.translatesAutoresizingMaskIntoConstraints = false
+    openBtn.setContentHuggingPriority(.required, for: .horizontal)
+    openBtn.setContentCompressionResistancePriority(.required, for: .horizontal)
+    wireIconButton(openBtn) { [weak self] in
+      self?.actionHandler?("file_open", ["fileId": fileId])
+    }
+
+    row.addSubview(label)
+    row.addSubview(openBtn)
+
+    NSLayoutConstraint.activate([
+      openBtn.trailingAnchor.constraint(equalTo: row.trailingAnchor),
+      openBtn.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+      label.leadingAnchor.constraint(equalTo: row.leadingAnchor),
+      label.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+      label.trailingAnchor.constraint(lessThanOrEqualTo: openBtn.leadingAnchor, constant: -10),
+    ])
     attachRow(row, height: Self.kRowHeight)
   }
 

@@ -95,9 +95,21 @@ class TransferSessionController extends ChangeNotifier {
   bool get hadSuccessfulConnection => _hadSuccessfulConnection;
   bool get isBackgrounded => _wasBackgrounded;
   bool get isDisposed => _disposed;
-  bool get isConnected =>
-      _connectionState == WebRtcConnectionState.connected ||
-      (_webRtc?.isDataChannelOpen ?? false);
+  bool get isConnected {
+    if (_connectionState == WebRtcConnectionState.disconnected ||
+        _connectionState == WebRtcConnectionState.failed) {
+      return false;
+    }
+    return _connectionState == WebRtcConnectionState.connected ||
+        (_webRtc?.isDataChannelOpen ?? false);
+  }
+
+  bool get canTransferFiles =>
+      isConnected &&
+      !_reconnecting &&
+      !_peerHasLeft &&
+      !_userInitiatedLeave &&
+      _fileTransfer != null;
   bool get isDataChannelReady => _webRtc?.isDataChannelOpen ?? false;
   bool get isPaired => _session?.remotePeerId != null;
   FileTransferService? get fileTransfer => _fileTransfer;
@@ -1056,7 +1068,11 @@ class TransferSessionController extends ChangeNotifier {
     }
   }
 
-  Future<void> reconnectIfNeeded({bool force = false}) async {
+  Future<void> manualReconnect() async {
+    await reconnectIfNeeded(force: true, manual: true);
+  }
+
+  Future<void> reconnectIfNeeded({bool force = false, bool manual = false}) async {
     if (_disposed || !isPaired || _peerHasLeft || _userInitiatedLeave) return;
     if (_reconnecting) return;
 
@@ -1067,10 +1083,12 @@ class TransferSessionController extends ChangeNotifier {
 
     if (isConnected && !force) return;
 
-    final lastAttempt = _lastReconnectAt;
-    if (lastAttempt != null &&
-        DateTime.now().difference(lastAttempt) < const Duration(seconds: 5)) {
-      return;
+    if (!manual) {
+      final lastAttempt = _lastReconnectAt;
+      if (lastAttempt != null &&
+          DateTime.now().difference(lastAttempt) < const Duration(seconds: 5)) {
+        return;
+      }
     }
 
     _lastReconnectAt = DateTime.now();
@@ -1198,12 +1216,10 @@ class TransferSessionController extends ChangeNotifier {
       throw StateError('Bağlantı henüz hazır değil.');
     }
 
-    if (!isConnected) {
-      await reconnectIfNeeded();
-    }
-
-    if (!isConnected) {
-      throw StateError('Karşı cihazla bağlantı kurulamadı. Yeniden bağlanmayı deneyin.');
+    if (!canTransferFiles) {
+      throw StateError(
+        'Bağlantı yok. Dosya göndermeden önce yeniden bağlanın.',
+      );
     }
 
     await _fileTransfer!.ensurePeerReady();

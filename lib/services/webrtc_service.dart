@@ -58,26 +58,63 @@ class WebRtcService {
   static const _offerRetryInterval = Duration(milliseconds: 900);
   static const _maxOfferAttempts = 10;
 
-  static const _iceServers = [
-    {'urls': 'stun:stun.l.google.com:19302'},
-    {'urls': 'stun:stun1.l.google.com:19302'},
-    // NAT/firewall arkasındaki cihazlar için (Mac ↔ Windows).
-    {
-      'urls': 'turn:openrelay.metered.ca:80',
-      'username': 'openrelayproject',
-      'credential': 'openrelayproject',
-    },
-    {
-      'urls': 'turn:openrelay.metered.ca:443',
-      'username': 'openrelayproject',
-      'credential': 'openrelayproject',
-    },
-    {
-      'urls': 'turn:openrelay.metered.ca:443?transport=tcp',
-      'username': 'openrelayproject',
-      'credential': 'openrelayproject',
-    },
-  ];
+  // Opsiyonel özel TURN sunucusu (ör. ücretsiz Metered hesabı). Derlerken:
+  //   flutter build windows --release \
+  //     --dart-define=DIRECTDROP_TURN_URL=turn:global.relay.metered.ca:443?transport=tcp \
+  //     --dart-define=DIRECTDROP_TURN_USERNAME=... \
+  //     --dart-define=DIRECTDROP_TURN_CREDENTIAL=...
+  // Tanımlıysa farklı ağlardaki (Mac ↔ Windows) cihazlar güvenilir şekilde
+  // relay üzerinden bağlanır; aynı ağda zaten doğrudan P2P kullanılır.
+  static const _customTurnUrl =
+      String.fromEnvironment('DIRECTDROP_TURN_URL');
+  static const _customTurnUsername =
+      String.fromEnvironment('DIRECTDROP_TURN_USERNAME');
+  static const _customTurnCredential =
+      String.fromEnvironment('DIRECTDROP_TURN_CREDENTIAL');
+
+  static List<Map<String, dynamic>> get _iceServers {
+    final servers = <Map<String, dynamic>>[
+      {'urls': 'stun:stun.l.google.com:19302'},
+      {'urls': 'stun:stun1.l.google.com:19302'},
+      {'urls': 'stun:stun2.l.google.com:19302'},
+    ];
+
+    if (_customTurnUrl.isNotEmpty) {
+      servers.add({
+        'urls': _customTurnUrl,
+        if (_customTurnUsername.isNotEmpty) 'username': _customTurnUsername,
+        if (_customTurnCredential.isNotEmpty)
+          'credential': _customTurnCredential,
+      });
+    } else {
+      // Özel TURN tanımlı değilse: NAT/firewall arkasındaki cihazlar için
+      // ücretsiz açık relay (öncelikle 443/TLS — kurumsal firewall'ları aşar).
+      servers.addAll(const [
+        {
+          'urls': 'turn:openrelay.metered.ca:443?transport=tcp',
+          'username': 'openrelayproject',
+          'credential': 'openrelayproject',
+        },
+        {
+          'urls': 'turns:openrelay.metered.ca:443?transport=tcp',
+          'username': 'openrelayproject',
+          'credential': 'openrelayproject',
+        },
+        {
+          'urls': 'turn:openrelay.metered.ca:443',
+          'username': 'openrelayproject',
+          'credential': 'openrelayproject',
+        },
+        {
+          'urls': 'turn:openrelay.metered.ca:80',
+          'username': 'openrelayproject',
+          'credential': 'openrelayproject',
+        },
+      ]);
+    }
+
+    return servers;
+  }
 
   Future<void> initialize() async {
     _setState(WebRtcConnectionState.connecting);
@@ -87,6 +124,8 @@ class WebRtcService {
     _peerConnection = await createPeerConnection({
       'iceServers': _iceServers,
       'sdpSemantics': 'unified-plan',
+      // Adayları önceden topla — bağlantı kurulumunu hızlandırır.
+      'iceCandidatePoolSize': 4,
     });
 
     _peerConnection!.onIceCandidate = (candidate) async {
