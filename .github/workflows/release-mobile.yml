@@ -15,6 +15,10 @@ on:
         description: "Play track (internal / alpha / beta / production)"
         type: string
         default: internal
+      submit_for_review:
+        description: "iOS'u App Store incelemesine gönder"
+        type: boolean
+        default: true
   push:
     tags:
       - "v*"
@@ -126,7 +130,7 @@ jobs:
           if-no-files-found: error
 
       - name: Upload App Store release notes
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
         env:
           APPSTORE_KEY_ID: ${{ secrets.APPSTORE_KEY_ID }}
           APPSTORE_ISSUER_ID: ${{ secrets.APPSTORE_ISSUER_ID }}
@@ -144,7 +148,7 @@ jobs:
           APPSTORE_KEY_ID: ${{ secrets.APPSTORE_KEY_ID }}
           APPSTORE_ISSUER_ID: ${{ secrets.APPSTORE_ISSUER_ID }}
           APPSTORE_PRIVATE_KEY: ${{ secrets.APPSTORE_PRIVATE_KEY }}
-          SUBMIT_FOR_REVIEW: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && 'true' || 'false' }}
+          SUBMIT_FOR_REVIEW: ${{ ((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || (github.event_name == 'workflow_dispatch' && inputs.submit_for_review)) && 'true' || 'false' }}
         run: |
           if [ -z "$APPSTORE_PRIVATE_KEY" ]; then
             echo "App Store API secret'ları yok — yalnızca IPA artifact yüklendi."
