@@ -154,7 +154,12 @@ platform :ios do
   desc "App Store sürümünün locale'lerini ve whatsNew/description durumunu yazdır"
   lane :diagnose_locales do
     require "spaceship"
-    Spaceship::ConnectAPI.token = app_store_api_key_from_env
+    token = Spaceship::ConnectAPI::Token.create(
+      key_id: ENV["APPSTORE_KEY_ID"],
+      issuer_id: ENV["APPSTORE_ISSUER_ID"],
+      key: ENV["APPSTORE_PRIVATE_KEY"]
+    )
+    Spaceship::ConnectAPI.token = token
     app = Spaceship::ConnectAPI::App.find("com.directdrop.app")
     UI.user_error!("App bulunamadı: com.directdrop.app") if app.nil?
     UI.message("App primaryLocale: #{app.primary_locale}")
