@@ -153,12 +153,17 @@ platform :ios do
 
   desc "Yüklenmiş (işlenmiş) build'i App Store incelemesine gönder — yeniden derleme yok"
   lane :submit_review do
+    # NOT: skip_metadata YAPMA. Sürümün "What's New" (whatsNew/release notes) alanı
+    # boşsa App Store incelemeye göndermeyi reddeder
+    # ("You must provide a value for the attribute 'whatsNew'"). Bu yüzden metin
+    # metadata'sını (release_notes dahil) yükleyip ardından gönderiyoruz.
     upload_to_app_store(
       api_key: app_store_api_key_from_env,
       app_identifier: "com.directdrop.app",
       app_version: pubspec_version_name,
+      metadata_path: "./metadata",
       skip_binary_upload: true,
-      skip_metadata: true,
+      skip_metadata: false,
       skip_screenshots: true,
       submit_for_review: true,
       automatic_release: false,
