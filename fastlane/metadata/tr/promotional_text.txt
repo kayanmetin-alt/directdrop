@@ -1,1 +1,1 @@
-iPhone ve iPad'inizden QR kodla eşleşin, WebRTC ile hızlı dosya aktarın. Dosyalarınız sunucuya yüklenmez.
+Cihazlarınız arasında QR kodla eşleşin, WebRTC ile hızlı dosya aktarın. Telefon, tablet ve bilgisayar. Dosyalarınız sunucuya yüklenmez.

@@ -1,9 +1,10 @@
-DirectDrop, iPhone ve iPad'inizden fotoğraf, video ve dosya aktarmayı kolaylaştıran hızlı bir paylaşım uygulamasıdır.
+DirectDrop, cihazlarınız arasında fotoğraf, video ve dosyaları hızlıca aktarmanızı sağlayan bir paylaşım uygulamasıdır. Telefon, tablet ve bilgisayarlarınız arasında doğrudan, platformdan bağımsız transfer.
 
-QR kod veya 6 haneli oda kodu ile eşleşin, bağlantı isteğini onaylayın ve dosyalarınızı doğrudan karşı tarafa gönderin.
+QR kod veya 6 haneli oda kodu ile eşleşin, bağlantı isteğini onaylayın ve dosyalarınızı doğrudan karşı cihaza gönderin.
 
 Öne çıkanlar:
 
+• Platformlar arası transfer: telefon, tablet ve bilgisayar
 • QR kod veya oda kodu ile hızlı eşleştirme
 • WebRTC ile doğrudan transfer
 • Dosya içeriği sunucuya yüklenmeden aktarım
