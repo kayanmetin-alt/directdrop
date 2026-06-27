@@ -1,0 +1,27 @@
+name: Submit iOS for Review
+
+# Yüklenmiş (işlenmiş) build'i App Store incelemesine gönderir — yeniden derleme yok.
+# release-mobile çalıştırmasında binary yüklenmiş ama build henüz "processing"
+# olduğu için otomatik gönderim başarısız olduysa, build işlendikten sonra bunu çalıştır.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  submit:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Submit for review
+        env:
+          APPSTORE_KEY_ID: ${{ secrets.APPSTORE_KEY_ID }}
+          APPSTORE_ISSUER_ID: ${{ secrets.APPSTORE_ISSUER_ID }}
+          APPSTORE_PRIVATE_KEY: ${{ secrets.APPSTORE_PRIVATE_KEY }}
+        run: |
+          if [ -z "$APPSTORE_PRIVATE_KEY" ]; then
+            echo "App Store API secret'ları yok — gönderim atlandı."
+            exit 1
+          fi
+          sudo gem install fastlane -NV
+          cd fastlane && fastlane ios submit_review

@@ -61,6 +61,12 @@ platform :android do
     UI.user_error!("PLAY_STORE_JSON_PATH tanımlı değil (.env veya export)") if json_key.nil? || json_key.empty?
     UI.user_error!("JSON dosyası yok: #{json_key}") unless File.exist?(json_key)
 
+    # Üretim (production) track'ine ilk kez API ile tam yayın yapılamaz: Google
+    # "Precondition check failed" döndürür. İlk production sürümü taslak (draft)
+    # olarak yüklenir, sonra Play Console'da tek tıkla yayına alınır. Bu yüzden
+    # release_status dışarıdan ayarlanabilir.
+    release_status = ENV.fetch("PLAY_RELEASE_STATUS", "completed")
+
     upload_to_play_store(
       track: ENV.fetch("PLAY_STORE_TRACK", "internal"),
       aab: aab_path,
@@ -69,7 +75,7 @@ platform :android do
       skip_upload_metadata: true,
       skip_upload_images: true,
       skip_upload_screenshots: true,
-      release_status: "completed"
+      release_status: release_status
     )
   end
 
@@ -142,6 +148,24 @@ platform :ios do
       submit_for_review: ENV.fetch("SUBMIT_FOR_REVIEW", "false") == "true",
       automatic_release: false,
       force: true
+    )
+  end
+
+  desc "Yüklenmiş (işlenmiş) build'i App Store incelemesine gönder — yeniden derleme yok"
+  lane :submit_review do
+    upload_to_app_store(
+      api_key: app_store_api_key_from_env,
+      app_identifier: "com.directdrop.app",
+      app_version: pubspec_version_name,
+      skip_binary_upload: true,
+      skip_metadata: true,
+      skip_screenshots: true,
+      submit_for_review: true,
+      automatic_release: false,
+      force: true,
+      precheck_include_in_app_purchases: false,
+      run_precheck_before_submit: false,
+      ignore_language_directory_validation: true
     )
   end
 

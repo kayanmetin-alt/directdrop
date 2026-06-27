@@ -15,6 +15,10 @@ on:
         description: "Play track (internal / alpha / beta / production)"
         type: string
         default: internal
+      play_release_status:
+        description: "Play release durumu (completed / draft). İlk production sürümü için draft."
+        type: string
+        default: completed
       submit_for_review:
         description: "iOS'u App Store incelemesine gönder"
         type: boolean
@@ -79,6 +83,7 @@ jobs:
         env:
           PLAY_STORE_JSON: ${{ secrets.PLAY_STORE_JSON }}
           PLAY_STORE_TRACK: ${{ github.event.inputs.play_track || 'internal' }}
+          PLAY_RELEASE_STATUS: ${{ github.event.inputs.play_release_status || 'completed' }}
         run: |
           if [ -z "$PLAY_STORE_JSON" ]; then
             echo "PLAY_STORE_JSON secret yok — yalnızca AAB artifact yüklendi."
