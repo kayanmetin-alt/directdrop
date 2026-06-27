@@ -57,9 +57,9 @@ class WindowsDownloadSettings extends StatelessWidget {
             ),
             const SizedBox(height: 8),
             Text(
-              'Bu link yalnızca Windows için kurulum dosyasıdır (Setup.exe). '
+              'Bu link doğrudan kurulum dosyasıdır (Setup.exe, zip değil). '
               'Telefon veya Mac\'te çalışmaz; karşı tarafın Windows '
-              'bilgisayarına kurması gerekir.',
+              'bilgisayarına indirip çift tıklayarak kurması gerekir.',
               style: theme.textTheme.bodySmall?.copyWith(
                 color: theme.colorScheme.onSurfaceVariant,
               ),

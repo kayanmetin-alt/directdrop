@@ -18,6 +18,7 @@ abstract final class DownloadUrls {
       'DirectDrop — Windows kurulum dosyası (sürüm $version)\n\n'
       'Bu link yalnızca Windows bilgisayarlar içindir (Setup.exe). '
       'iPhone, iPad veya Mac\'te çalışmaz; Windows bilgisayara kurulması gerekir.\n\n'
-      'İndir: $url\n\n'
+      'İndir (doğrudan .exe — zip değil): $url\n\n'
+      'İndirdikten sonra zip açmanıza gerek yok; dosyaya çift tıklayarak kurun.\n\n'
       'Tüm sürümler: $releasesLatest';
 }
