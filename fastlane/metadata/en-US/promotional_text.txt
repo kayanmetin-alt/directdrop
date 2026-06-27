@@ -1,0 +1,1 @@
+Pair across your devices with a QR code and send files fast over WebRTC. Phone, tablet and computer. Your files are never uploaded to a server.

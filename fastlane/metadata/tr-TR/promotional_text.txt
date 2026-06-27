@@ -1,1 +1,0 @@
-Cihazlarınız arasında QR kodla eşleşin, WebRTC ile hızlı dosya aktarın. Telefon, tablet ve bilgisayar. Dosyalarınız sunucuya yüklenmez.

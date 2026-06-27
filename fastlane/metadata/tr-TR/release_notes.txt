@@ -1,5 +1,0 @@
-• Fotoğraf ve video gönderiminde hazırlık ilerlemesi ve iptal
-• Gelen dosyalar için toplu onay / reddetme
-• Eşleşme oturumu geçişlerinde kararlılık iyileştirmeleri
-• iPad arayüz düzenlemeleri
-• Genel hata düzeltmeleri ve performans iyileştirmeleri

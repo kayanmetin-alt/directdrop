@@ -1,0 +1,20 @@
+DirectDrop is a fast sharing app that lets you transfer photos, videos and files directly between your devices. Direct, platform-independent transfer between your phone, tablet and computer.
+
+Pair with a QR code or a 6-digit room code, approve the connection request, and send your files straight to the other device.
+
+Highlights:
+
+• Cross-platform transfer: phone, tablet and computer
+• Quick pairing with a QR code or room code
+• Direct transfer over WebRTC
+• File contents are sent without being uploaded to a server
+• Send multiple files at once with batch approval
+• Live transfer progress
+• Progress indicator while preparing photos and videos
+• Transfer history for sent and received files
+• Reconnect to saved devices
+• Connection request notifications even when the app is closed
+
+DirectDrop uses Firebase-based signaling to set up pairing and connections. The content of transferred files is not stored on DirectDrop servers.
+
+A simple, fast and reliable file transfer experience for everyday use.

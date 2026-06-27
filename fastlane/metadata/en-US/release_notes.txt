@@ -1,0 +1,5 @@
+• Improved stability when reconnecting to saved devices
+• Batch approve/decline for incoming files
+• Progress and cancel while preparing photos and videos
+• Interface refinements
+• General bug fixes and performance improvements
