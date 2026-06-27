@@ -13,6 +13,30 @@ def pubspec_version_name
   UI.user_error!("pubspec.yaml içinde version bulunamadı")
 end
 
+# App Store'da yayınlamak istediğimiz diller. tr = birincil dil.
+DIRECTDROP_APP_STORE_LOCALES = %w[tr en-US].freeze
+
+def directdrop_meta(locale, file)
+  path = File.join(project_root, "fastlane", "metadata", locale, "#{file}.txt")
+  return nil unless File.exist?(path)
+  content = File.read(path).strip
+  content.empty? ? nil : content
+end
+
+def directdrop_connect_token
+  require "spaceship"
+  %w[APPSTORE_KEY_ID APPSTORE_ISSUER_ID APPSTORE_PRIVATE_KEY].each do |var|
+    UI.user_error!("#{var} tanımlı değil") if ENV[var].to_s.empty?
+  end
+  token = Spaceship::ConnectAPI::Token.create(
+    key_id: ENV["APPSTORE_KEY_ID"],
+    issuer_id: ENV["APPSTORE_ISSUER_ID"],
+    key: ENV["APPSTORE_PRIVATE_KEY"]
+  )
+  Spaceship::ConnectAPI.token = token
+  token
+end
+
 default_platform(:android)
 
 # App Store Connect sometimes returns "No data" while Fastlane tries to
@@ -153,13 +177,7 @@ platform :ios do
 
   desc "App Store sürümünün locale'lerini ve whatsNew/description durumunu yazdır"
   lane :diagnose_locales do
-    require "spaceship"
-    token = Spaceship::ConnectAPI::Token.create(
-      key_id: ENV["APPSTORE_KEY_ID"],
-      issuer_id: ENV["APPSTORE_ISSUER_ID"],
-      key: ENV["APPSTORE_PRIVATE_KEY"]
-    )
-    Spaceship::ConnectAPI.token = token
+    directdrop_connect_token
     app = Spaceship::ConnectAPI::App.find("com.directdrop.app")
     UI.user_error!("App bulunamadı: com.directdrop.app") if app.nil?
     UI.message("App primaryLocale: #{app.primary_locale}")
@@ -179,24 +197,141 @@ platform :ios do
     end
   end
 
-  desc "Yüklenmiş (işlenmiş) build'i App Store incelemesine gönder — yeniden derleme yok"
+  # En-US ekranlarını tr'den kopyala (App Store her localization için ayrı
+  # ekran görüntüsü ister; metin içermediklerinden tr setini İngilizce için de
+  # kullanabiliriz).
+  desc "tr ekran görüntülerini en-US'a kopyala"
+  lane :mirror_screenshots do
+    require "fileutils"
+    src = File.join(project_root, "fastlane", "screenshots", "tr")
+    dst = File.join(project_root, "fastlane", "screenshots", "en-US")
+    next UI.important("tr ekran görüntüsü klasörü yok, atlanıyor.") unless Dir.exist?(src)
+    FileUtils.mkdir_p(dst)
+    Dir.glob(File.join(src, "*.png")).each do |f|
+      FileUtils.cp(f, File.join(dst, File.basename(f)))
+    end
+    UI.success("en-US ekran görüntüleri hazırlandı (#{Dir.glob(File.join(dst, '*.png')).size} dosya)")
+  end
+
+  # Spaceship ile App Store sürüm + uygulama bilgisi localization'larını
+  # oluştur/güncelle. deliver yalnızca var olan locale'leri güncellediğinden ve
+  # whatsNew'i (ilk sürüm varsayımıyla) atladığından bunu doğrudan yapıyoruz.
+  desc "App Store tr + en-US localization'larını oluştur/güncelle (whatsNew dahil)"
+  lane :ensure_localizations do
+    directdrop_connect_token
+    app = Spaceship::ConnectAPI::App.find("com.directdrop.app")
+    UI.user_error!("App bulunamadı: com.directdrop.app") if app.nil?
+
+    version = app.get_edit_app_store_version(platform: "IOS")
+    UI.user_error!("Düzenlenebilir (edit) sürüm yok.") if version.nil?
+
+    existing_version_locs = version.get_app_store_version_localizations.each_with_object({}) do |l, h|
+      h[l.locale] = l
+    end
+
+    DIRECTDROP_APP_STORE_LOCALES.each do |locale|
+      desc_txt  = directdrop_meta(locale, "description")
+      keywords  = directdrop_meta(locale, "keywords")
+      whats_new = directdrop_meta(locale, "release_notes")
+      promo     = directdrop_meta(locale, "promotional_text")
+      support   = directdrop_meta(locale, "support_url")
+      marketing = directdrop_meta(locale, "marketing_url")
+
+      if (loc = existing_version_locs[locale])
+        loc.update(attributes: {
+          description: desc_txt,
+          keywords: keywords,
+          whats_new: whats_new,
+          promotional_text: promo,
+          support_url: support,
+          marketing_url: marketing
+        }.compact)
+        UI.success("Sürüm localization güncellendi: #{locale} (whatsNew #{whats_new.to_s.length} chars)")
+      else
+        version.create_app_store_version_localization(attributes: {
+          "locale" => locale,
+          "description" => desc_txt,
+          "keywords" => keywords,
+          "whatsNew" => whats_new,
+          "promotionalText" => promo,
+          "supportUrl" => support,
+          "marketingUrl" => marketing
+        }.compact)
+        UI.success("Sürüm localization OLUŞTURULDU: #{locale}")
+      end
+    end
+
+    # Uygulama bilgisi (App Info) localization'ları: ad, alt başlık, gizlilik URL.
+    app_info = app.fetch_edit_app_info
+    if app_info.nil?
+      UI.important("Düzenlenebilir App Info yok; ad/alt başlık güncellenmedi.")
+    else
+      existing_info_locs = app_info.get_app_info_localizations.each_with_object({}) do |l, h|
+        h[l.locale] = l
+      end
+
+      DIRECTDROP_APP_STORE_LOCALES.each do |locale|
+        name        = directdrop_meta(locale, "name")
+        subtitle    = directdrop_meta(locale, "subtitle")
+        privacy_url = directdrop_meta(locale, "privacy_url")
+
+        if (loc = existing_info_locs[locale])
+          loc.update(attributes: {
+            name: name,
+            subtitle: subtitle,
+            privacy_policy_url: privacy_url
+          }.compact)
+          UI.success("App Info localization güncellendi: #{locale}")
+        else
+          app_info.create_app_info_localization(attributes: {
+            "locale" => locale,
+            "name" => name,
+            "subtitle" => subtitle,
+            "privacyPolicyUrl" => privacy_url
+          }.compact)
+          UI.success("App Info localization OLUŞTURULDU: #{locale}")
+        end
+      end
+    end
+  end
+
+  desc "Yüklenmiş (işlenmiş) build'i App Store incelemesine gönder — yeniden derleme yok (tr + en-US)"
   lane :submit_review do
-    # Tanılama: sürümün hangi locale'lere sahip olduğunu ve whatsNew/description
-    # alanlarının dolu olup olmadığını yazdır. whatsNew hatasının kök nedenini
-    # (birincil dilin gerçek locale kodu) görmek için.
+    # 1) İngilizce ekran görüntülerini hazırla (tr'den kopyala).
+    mirror_screenshots
+
+    # 2) tr + en-US localization'larını spaceship ile oluştur/güncelle (whatsNew dahil).
+    #    deliver whatsNew'i atladığı ve yeni locale oluşturmadığı için bunu doğrudan yapıyoruz.
+    ensure_localizations
+
     diagnose_locales
 
-    # NOT: skip_metadata YAPMA. Sürümün "What's New" (whatsNew/release notes) alanı
-    # boşsa App Store incelemeye göndermeyi reddeder
-    # ("You must provide a value for the attribute 'whatsNew'"). Bu yüzden metin
-    # metadata'sını (release_notes dahil) yükleyip ardından gönderiyoruz.
+    # 3) Ekran görüntülerini yükle (artık en-US localization da var). Metin metadata'sına
+    #    dokunma (skip_metadata) ki spaceship ile yazdığımız whatsNew korunsun.
     upload_to_app_store(
       api_key: app_store_api_key_from_env,
       app_identifier: "com.directdrop.app",
       app_version: pubspec_version_name,
       metadata_path: "./metadata",
+      screenshots_path: "./screenshots",
       skip_binary_upload: true,
-      skip_metadata: false,
+      skip_metadata: true,
+      skip_screenshots: false,
+      overwrite_screenshots: true,
+      submit_for_review: false,
+      run_precheck_before_submit: false,
+      precheck_include_in_app_purchases: false,
+      ignore_language_directory_validation: true,
+      force: true
+    )
+
+    # 4) İncelemeye gönder (metadata/ekran görüntüsüne dokunmadan).
+    upload_to_app_store(
+      api_key: app_store_api_key_from_env,
+      app_identifier: "com.directdrop.app",
+      app_version: pubspec_version_name,
+      skip_binary_upload: true,
+      skip_metadata: true,
       skip_screenshots: true,
       submit_for_review: true,
       automatic_release: false,
