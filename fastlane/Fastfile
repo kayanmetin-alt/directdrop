@@ -151,8 +151,36 @@ platform :ios do
     )
   end
 
+  desc "App Store sürümünün locale'lerini ve whatsNew/description durumunu yazdır"
+  lane :diagnose_locales do
+    require "spaceship"
+    Spaceship::ConnectAPI.token = app_store_api_key_from_env
+    app = Spaceship::ConnectAPI::App.find("com.directdrop.app")
+    UI.user_error!("App bulunamadı: com.directdrop.app") if app.nil?
+    UI.message("App primaryLocale: #{app.primary_locale}")
+    version = app.get_edit_app_store_version(platform: "IOS")
+    if version.nil?
+      UI.important("Düzenlenebilir (edit) sürüm bulunamadı.")
+      next
+    end
+    UI.message("Edit sürüm: #{version.version_string} (state=#{version.app_store_state})")
+    locs = version.get_app_store_version_localizations
+    UI.message("Sürüm localization sayısı: #{locs.size}")
+    locs.each do |l|
+      UI.message(
+        "LOCALE=#{l.locale} | whatsNew=#{l.whats_new.to_s.length} chars | " \
+        "description=#{l.description.to_s.length} chars | keywords=#{l.keywords.to_s.length}"
+      )
+    end
+  end
+
   desc "Yüklenmiş (işlenmiş) build'i App Store incelemesine gönder — yeniden derleme yok"
   lane :submit_review do
+    # Tanılama: sürümün hangi locale'lere sahip olduğunu ve whatsNew/description
+    # alanlarının dolu olup olmadığını yazdır. whatsNew hatasının kök nedenini
+    # (birincil dilin gerçek locale kodu) görmek için.
+    diagnose_locales
+
     # NOT: skip_metadata YAPMA. Sürümün "What's New" (whatsNew/release notes) alanı
     # boşsa App Store incelemeye göndermeyi reddeder
     # ("You must provide a value for the attribute 'whatsNew'"). Bu yüzden metin
