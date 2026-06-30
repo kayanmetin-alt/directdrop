@@ -91,7 +91,17 @@ fi
 
 # --- Notarize + staple ---
 echo "==> Notarize ediliyor (Apple'a gönderiliyor, birkaç dakika sürebilir)"
-xcrun notarytool submit "$DMG" --keychain-profile "$NOTARY_PROFILE" --wait
+if [[ -n "${NOTARY_KEY_ID:-}" && -n "${NOTARY_ISSUER_ID:-}" && -n "${NOTARY_KEY_FILE:-}" ]]; then
+  # CI: App Store Connect API anahtarı (.p8) ile
+  xcrun notarytool submit "$DMG" \
+    --key "$NOTARY_KEY_FILE" \
+    --key-id "$NOTARY_KEY_ID" \
+    --issuer "$NOTARY_ISSUER_ID" \
+    --wait
+else
+  # Yerel: Keychain profili ile
+  xcrun notarytool submit "$DMG" --keychain-profile "$NOTARY_PROFILE" --wait
+fi
 
 echo "==> Staple (notarization bileti dmg'ye işleniyor)"
 xcrun stapler staple "$DMG"
