@@ -1179,8 +1179,14 @@ class TransferSessionController extends ChangeNotifier {
         (_webRtc == null ||
             _connectionState == WebRtcConnectionState.failed ||
             _connectionState == WebRtcConnectionState.disconnected)) {
-      await _restartWebRtcForIncomingOffer();
+      final restoredTransfer = await _restartWebRtcForIncomingOffer();
       await _webRtc?.handleSignalingMessage(message);
+      // Yarım transfer durumu korunduysa, teklif/yanıt işlendikten sonra
+      // (veri kanalı yeniden açılınca) sürdür. Aksi halde teklifi bekleyerek
+      // kilitlenmemek için awaited etmiyoruz.
+      if (restoredTransfer) {
+        unawaited(_fileTransfer?.resumeAfterReconnect() ?? Future<void>.value());
+      }
       return;
     }
 
@@ -1192,12 +1198,24 @@ class TransferSessionController extends ChangeNotifier {
     }
   }
 
-  Future<void> _restartWebRtcForIncomingOffer() async {
-    if (_disposed || _session?.remotePeerId == null) return;
+  /// Gelen yeni teklif (offer) için WebRTC'yi yeniden kurar. Yarım kalan
+  /// transferleri KORUR: eski servisi dispose etmek yerine durumunu yakalayıp
+  /// yeni servise geri yükler. Aksi halde teklifi alan taraf (genelde guest)
+  /// aktif/duraklatılmış transfer listesini kaybeder ve karşı cihazda transfer
+  /// görünürken bu cihazda görünmez olur.
+  ///
+  /// Transfer durumu geri yüklendiyse `true` döner; çağıran taraf teklif
+  /// işlendikten sonra `resumeAfterReconnect()` ile sürdürür.
+  Future<bool> _restartWebRtcForIncomingOffer() async {
+    if (_disposed || _session?.remotePeerId == null) return false;
 
     _deferredReconnectTimer?.cancel();
     await _connectionSubscription?.cancel();
-    await _fileTransfer?.dispose();
+
+    TransferRestoreState? transferRestore;
+    if (_fileTransfer != null) {
+      transferRestore = await _fileTransfer!.detachForReconnect();
+    }
     await _webRtc?.dispose();
     _fileTransfer = null;
     _webRtc = null;
@@ -1207,8 +1225,10 @@ class TransferSessionController extends ChangeNotifier {
     await _startWebRtc(
       remotePeerId: _session!.remotePeerId!,
       isInitiator: false,
+      transferRestore: transferRestore,
     );
     _scheduleConnectionWatch();
+    return transferRestore != null;
   }
 
   Future<void> sendFilePaths(
