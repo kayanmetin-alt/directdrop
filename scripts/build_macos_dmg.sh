@@ -44,9 +44,22 @@ if [[ -z "${DEVID_IDENTITY:-}" ]]; then
 fi
 echo "==> İmza kimliği: $DEVID_IDENTITY"
 
-# --- Derleme ---
-echo "==> flutter build macos --release"
-flutter build macos --release
+# --- Derleme (imzasız) ---
+# Doğrudan dağıtımda provisioning profile gerekmez. Projeyi imzasız derleyip
+# (CODE_SIGNING_ALLOWED=NO) ardından Developer ID ile elle imzalıyoruz; böylece
+# hem yerelde hem CI'da (development profile olmadan) tutarlı çalışır.
+echo "==> Derleme (imzasız) — sonrasında Developer ID ile imzalanacak"
+flutter pub get
+flutter build macos --release --config-only
+( cd macos && pod install )
+rm -rf build/macos
+xcodebuild \
+  -workspace macos/Runner.xcworkspace \
+  -scheme Runner \
+  -configuration Release \
+  -derivedDataPath build/macos \
+  CODE_SIGNING_ALLOWED=NO \
+  build | tail -n 8
 
 APP="build/macos/Build/Products/Release/DirectDrop.app"
 [[ -d "$APP" ]] || { echo "HATA: $APP yok"; exit 1; }
