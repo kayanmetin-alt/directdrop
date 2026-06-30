@@ -28,7 +28,8 @@ jobs:
 
       - name: Read version
         id: version
-        run: echo "name=$(grep '^version:' pubspec.yaml | sed 's/version: //' | cut -d+ -f1)" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "name=$(grep '^version:' pubspec.yaml | sed 's/version: //' | cut -d+ -f1)" >> "$GITHUB_OUTPUT"
 
       - name: Import Developer ID certificate
         env:
