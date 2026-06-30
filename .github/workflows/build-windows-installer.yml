@@ -86,8 +86,13 @@ jobs:
           $version = "${{ steps.version.outputs.version }}"
           $tag = "v$version"
           $file = "dist/windows/DirectDrop-Setup-$version.exe"
+          # Sabit adlı kopya: web sitesindeki doğrudan indirme linki
+          # (releases/latest/download/DirectDrop-Setup.exe) her zaman en güncel
+          # sürümü indirsin diye sürümden bağımsız bir ad da yükleniyor.
+          $stable = "dist/windows/DirectDrop-Setup.exe"
+          Copy-Item $file $stable -Force
           $view = gh release view $tag 2>&1
           if ($LASTEXITCODE -ne 0) {
             gh release create $tag --title "DirectDrop $version" --notes "Windows kurulum dosyası (Setup.exe)."
           }
-          gh release upload $tag $file --clobber
+          gh release upload $tag $file $stable --clobber

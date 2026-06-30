@@ -10,7 +10,7 @@ class WindowsDownloadSettings extends StatelessWidget {
 
   String get _version => DownloadUrls.windowsReleaseVersion;
 
-  String get _downloadUrl => DownloadUrls.windowsInstaller(_version);
+  String get _downloadUrl => DownloadUrls.windowsInstallerLatest;
 
   String _shareText() => DownloadUrls.windowsShareMessage(
         url: _downloadUrl,
