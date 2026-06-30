@@ -2,7 +2,9 @@ import 'dart:async';
 import 'dart:io' show Platform;
 
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 
+import '../constants/legal_urls.dart';
 import '../services/developer_mode_service.dart';
 import '../services/device_identity_service.dart';
 import '../widgets/desktop_centered_layout.dart';
@@ -47,6 +49,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
     await showDeviceNameEditorDialog(context, isFirstSetup: false);
   }
 
+  Future<void> _openWebsite() async {
+    final uri = Uri.parse(LegalUrls.website);
+    if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+      throw StateError('Web sitesi açılamadı.');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -64,6 +73,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
               onTap: _editDeviceName,
             ),
             if (Platform.isAndroid) const WindowsDownloadSettings(),
+            ListTile(
+              leading: const Icon(Icons.language_outlined),
+              title: const Text('Web sitesi'),
+              subtitle: const Text('Tüm sürümleri indir, destek ve gizlilik'),
+              trailing: const Icon(Icons.open_in_new),
+              onTap: () async {
+                try {
+                  await _openWebsite();
+                } catch (e) {
+                  if (!mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('$e')),
+                  );
+                }
+              },
+            ),
             ListTile(
               leading: const Icon(Icons.info_outline),
               title: const Text('Hakkında'),

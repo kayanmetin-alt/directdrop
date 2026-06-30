@@ -16,6 +16,10 @@ abstract final class DownloadUrls {
   static String windowsInstaller([String? version]) =>
       'https://github.com/kayanmetin-alt/directdrop/releases/download/v${version ?? windowsReleaseVersion}/DirectDrop-Setup-${version ?? windowsReleaseVersion}.exe';
 
+  /// Sürümden bağımsız, doğrudan indirme linki (notarize edilmiş Mac .dmg).
+  static const macInstallerLatest =
+      'https://github.com/kayanmetin-alt/directdrop/releases/latest/download/DirectDrop.dmg';
+
   /// WhatsApp, Mail vb. ile paylaşılacak metin.
   static String windowsShareMessage({
     required String url,
