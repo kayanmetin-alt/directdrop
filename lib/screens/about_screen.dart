@@ -9,6 +9,13 @@ import '../widgets/desktop_centered_layout.dart';
 class AboutScreen extends StatelessWidget {
   const AboutScreen({super.key});
 
+  Future<void> _openWebsite() async {
+    final uri = Uri.parse(LegalUrls.website);
+    if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+      throw StateError('Web sitesi açılamadı.');
+    }
+  }
+
   Future<void> _openPrivacyPolicy() async {
     final uri = Uri.parse(LegalUrls.privacyPolicy);
     if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
@@ -63,6 +70,22 @@ class AboutScreen extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 32),
+            ListTile(
+              leading: const Icon(Icons.language_outlined),
+              title: const Text('Web sitesi'),
+              subtitle: const Text('Tüm sürümleri indir (Windows, mobil)'),
+              trailing: const Icon(Icons.open_in_new),
+              onTap: () async {
+                try {
+                  await _openWebsite();
+                } catch (e) {
+                  if (!context.mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('$e')),
+                  );
+                }
+              },
+            ),
             ListTile(
               leading: const Icon(Icons.privacy_tip_outlined),
               title: const Text('Gizlilik Politikası'),
