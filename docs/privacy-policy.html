@@ -1,51 +1,138 @@
 <!DOCTYPE html>
-<html lang="tr">
+<html lang="tr"
+      data-title-tr="DirectDrop — Gizlilik Politikası"
+      data-title-en="DirectDrop — Privacy Policy">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>DirectDrop — Gizlilik Politikası</title>
-  <style>
-    body { font-family: system-ui, sans-serif; max-width: 720px; margin: 2rem auto; padding: 0 1rem; line-height: 1.6; color: #1a1a1a; }
-    h1 { font-size: 1.5rem; }
-    h2 { font-size: 1.1rem; margin-top: 1.5rem; }
-    a { color: #2563eb; }
-  </style>
+  <link rel="stylesheet" href="assets/site.css">
+  <script src="assets/lang.js"></script>
 </head>
 <body>
-  <h1>DirectDrop Gizlilik Politikası</h1>
-  <p><strong>Son güncelleme:</strong> 21 Haziran 2026</p>
+  <nav>
+    <div class="wrap">
+      <a class="brand" href="index.html"><span class="mark">D</span>Direct<b>Drop</b></a>
+      <div class="nav-right">
+        <div class="links">
+          <a href="index.html#indir"><span data-lang="tr">İndir</span><span data-lang="en">Download</span></a>
+          <a href="index.html#ozellikler"><span data-lang="tr">Özellikler</span><span data-lang="en">Features</span></a>
+          <a href="index.html#nasil"><span data-lang="tr">Nasıl çalışır</span><span data-lang="en">How it works</span></a>
+          <a href="support.html"><span data-lang="tr">Destek</span><span data-lang="en">Support</span></a>
+        </div>
+        <div class="lang-switch" role="group" aria-label="Language">
+          <button type="button" data-set-lang="tr">TR</button>
+          <button type="button" data-set-lang="en">EN</button>
+        </div>
+      </div>
+    </div>
+  </nav>
 
-  <p>DirectDrop, eşleşmiş cihazlar arasında doğrudan dosya transferi sağlar. Bu politika hangi verilerin toplandığını ve nasıl kullanıldığını açıklar.</p>
+  <div class="wrap page-head">
+    <h1><span data-lang="tr">DirectDrop Gizlilik Politikası</span><span data-lang="en">DirectDrop Privacy Policy</span></h1>
+    <p class="sub">
+      <strong><span data-lang="tr">Son güncelleme:</span><span data-lang="en">Last updated:</span></strong>
+      <span data-lang="tr"> 21 Haziran 2026</span><span data-lang="en"> June 21, 2026</span>
+    </p>
+  </div>
 
-  <h2>Toplanan veriler</h2>
-  <ul>
-    <li><strong>Cihaz tanımlayıcısı:</strong> Eşleştirme ve yeniden bağlanma için yerel olarak oluşturulan anonim bir kimlik (Firebase Realtime Database’de saklanır).</li>
-    <li><strong>Cihaz adı:</strong> Sizin belirlediğiniz görünen ad (ör. “iPhone Metin”).</li>
-    <li><strong>Firebase Auth anonim kullanıcı kimliği:</strong> Veritabanı erişim kuralları için.</li>
-    <li><strong>FCM bildirim token’ı</strong> (mobil): Bağlantı isteği push bildirimleri için; yalnızca sizin cihazınızda saklanır ve Firebase üzerinden iletilir.</li>
-    <li><strong>Çevrimiçi durum / son görülme:</strong> Eşleşmiş cihazların birbirini bulması için.</li>
-  </ul>
+  <div class="wrap prose">
+    <p>
+      <span data-lang="tr">DirectDrop, eşleşmiş cihazlar arasında doğrudan dosya transferi sağlar. Bu politika hangi verilerin toplandığını ve nasıl kullanıldığını açıklar.</span>
+      <span data-lang="en">DirectDrop provides direct file transfer between paired devices. This policy explains what data is collected and how it is used.</span>
+    </p>
 
-  <h2>Toplanmayan veriler</h2>
-  <ul>
-    <li>Transfer ettiğiniz <strong>dosya içeriği sunucuya yüklenmez</strong>. Dosyalar WebRTC ile doğrudan cihazdan cihaza gider.</li>
-    <li>Ad, e-posta veya telefon numarası toplanmaz (anonim oturum kullanılır).</li>
-    <li>Konum verisi toplanmaz.</li>
-  </ul>
+    <h2><span data-lang="tr">Toplanan veriler</span><span data-lang="en">Data we collect</span></h2>
+    <ul>
+      <li>
+        <strong><span data-lang="tr">Cihaz tanımlayıcısı:</span><span data-lang="en">Device identifier:</span></strong>
+        <span data-lang="tr"> Eşleştirme ve yeniden bağlanma için yerel olarak oluşturulan anonim bir kimlik (Firebase Realtime Database’de saklanır).</span>
+        <span data-lang="en"> An anonymous, locally generated ID used for pairing and reconnecting (stored in Firebase Realtime Database).</span>
+      </li>
+      <li>
+        <strong><span data-lang="tr">Cihaz adı:</span><span data-lang="en">Device name:</span></strong>
+        <span data-lang="tr"> Sizin belirlediğiniz görünen ad (ör. “iPhone Metin”).</span>
+        <span data-lang="en"> The display name you set (e.g. “Metin’s iPhone”).</span>
+      </li>
+      <li>
+        <strong><span data-lang="tr">Firebase Auth anonim kullanıcı kimliği:</span><span data-lang="en">Firebase Auth anonymous user ID:</span></strong>
+        <span data-lang="tr"> Veritabanı erişim kuralları için.</span>
+        <span data-lang="en"> Used for database access rules.</span>
+      </li>
+      <li>
+        <strong><span data-lang="tr">FCM bildirim token’ı</span><span data-lang="en">FCM notification token</span></strong>
+        <span data-lang="tr"> (mobil): Bağlantı isteği push bildirimleri için; yalnızca sizin cihazınızda saklanır ve Firebase üzerinden iletilir.</span>
+        <span data-lang="en"> (mobile): For connection request push notifications; stored only on your device and delivered through Firebase.</span>
+      </li>
+      <li>
+        <strong><span data-lang="tr">Çevrimiçi durum / son görülme:</span><span data-lang="en">Online status / last seen:</span></strong>
+        <span data-lang="tr"> Eşleşmiş cihazların birbirini bulması için.</span>
+        <span data-lang="en"> So paired devices can find each other.</span>
+      </li>
+    </ul>
 
-  <h2>Üçüncü taraf hizmetler</h2>
-  <ul>
-    <li><strong>Google Firebase</strong> (Authentication, Realtime Database, Cloud Messaging): eşleştirme, bildirim ve oturum yönetimi.</li>
-    <li><strong>STUN/TURN sunucuları</strong> (WebRTC): bağlantı kurulumu için Google STUN ve Metered (OpenRelay) TURN sunucuları kullanılır. Cihazlar doğrudan bağlanabildiğinde dosya içeriği bu sunuculardan geçmez; doğrudan bağlantı kurulamadığında ise şifreli (DTLS-SRTP) trafik TURN sunucusu üzerinden aktarılabilir, ancak içerik sunucu tarafından okunamaz.</li>
-  </ul>
+    <h2><span data-lang="tr">Toplanmayan veriler</span><span data-lang="en">Data we do not collect</span></h2>
+    <ul>
+      <li>
+        <span data-lang="tr">Transfer ettiğiniz <strong>dosya içeriği sunucuya yüklenmez</strong>. Dosyalar WebRTC ile doğrudan cihazdan cihaza gider.</span>
+        <span data-lang="en">The <strong>contents of your transferred files are never uploaded to a server</strong>. Files go directly device‑to‑device over WebRTC.</span>
+      </li>
+      <li>
+        <span data-lang="tr">Ad, e‑posta veya telefon numarası toplanmaz (anonim oturum kullanılır).</span>
+        <span data-lang="en">No name, email or phone number is collected (anonymous sessions are used).</span>
+      </li>
+      <li>
+        <span data-lang="tr">Konum verisi toplanmaz.</span>
+        <span data-lang="en">No location data is collected.</span>
+      </li>
+    </ul>
 
-  <h2>Veri saklama ve silme</h2>
-  <p>Eşleştirme verileri Firebase’de oturum süresince tutulur. Uygulamayı kaldırmak cihazınızdaki yerel verileri siler; sunucudaki cihaz kaydı zamanla güncellenir veya silinebilir.</p>
+    <h2><span data-lang="tr">Üçüncü taraf hizmetler</span><span data-lang="en">Third‑party services</span></h2>
+    <ul>
+      <li>
+        <strong><span data-lang="tr">Google Firebase</span><span data-lang="en">Google Firebase</span></strong>
+        <span data-lang="tr"> (Authentication, Realtime Database, Cloud Messaging): eşleştirme, bildirim ve oturum yönetimi.</span>
+        <span data-lang="en"> (Authentication, Realtime Database, Cloud Messaging): pairing, notifications and session management.</span>
+      </li>
+      <li>
+        <strong><span data-lang="tr">STUN/TURN sunucuları</span><span data-lang="en">STUN/TURN servers</span></strong>
+        <span data-lang="tr"> (WebRTC): bağlantı kurulumu için Google STUN ve Metered (OpenRelay) TURN sunucuları kullanılır. Cihazlar doğrudan bağlanabildiğinde dosya içeriği bu sunuculardan geçmez; doğrudan bağlantı kurulamadığında ise şifreli (DTLS‑SRTP) trafik TURN sunucusu üzerinden aktarılabilir, ancak içerik sunucu tarafından okunamaz.</span>
+        <span data-lang="en"> (WebRTC): Google STUN and Metered (OpenRelay) TURN servers are used to establish connections. When devices connect directly, file content does not pass through these servers; when a direct connection cannot be made, encrypted (DTLS‑SRTP) traffic may be relayed through the TURN server, but the content cannot be read by the server.</span>
+      </li>
+    </ul>
 
-  <h2>Çocuklar</h2>
-  <p>Uygulama 13 yaş altına yönelik değildir.</p>
+    <h2><span data-lang="tr">Veri saklama ve silme</span><span data-lang="en">Data retention and deletion</span></h2>
+    <p>
+      <span data-lang="tr">Eşleştirme verileri Firebase’de oturum süresince tutulur. Uygulamayı kaldırmak cihazınızdaki yerel verileri siler; sunucudaki cihaz kaydı zamanla güncellenir veya silinebilir.</span>
+      <span data-lang="en">Pairing data is kept in Firebase for the duration of the session. Uninstalling the app deletes local data on your device; the device record on the server is updated or deleted over time.</span>
+    </p>
 
-  <h2>İletişim</h2>
-  <p>Sorularınız için: <a href="mailto:kayan.metin@gmail.com">kayan.metin@gmail.com</a></p>
+    <h2><span data-lang="tr">Çocuklar</span><span data-lang="en">Children</span></h2>
+    <p>
+      <span data-lang="tr">Uygulama 13 yaş altına yönelik değildir.</span>
+      <span data-lang="en">The app is not directed to children under 13.</span>
+    </p>
+
+    <h2><span data-lang="tr">İletişim</span><span data-lang="en">Contact</span></h2>
+    <p>
+      <span data-lang="tr">Sorularınız için: </span><span data-lang="en">For questions: </span>
+      <a href="mailto:kayan.metin@gmail.com">kayan.metin@gmail.com</a>
+    </p>
+  </div>
+
+  <footer>
+    <div class="wrap row">
+      <div>
+        <div class="brand" style="margin-bottom:8px"><span class="mark">D</span>Direct<b>Drop</b></div>
+        <div>© 2026 Metin Kayan</div>
+      </div>
+      <div class="footlinks">
+        <a href="index.html#indir"><span data-lang="tr">İndir</span><span data-lang="en">Download</span></a>
+        <a href="support.html"><span data-lang="tr">Destek</span><span data-lang="en">Support</span></a>
+        <a href="privacy-policy.html"><span data-lang="tr">Gizlilik Politikası</span><span data-lang="en">Privacy Policy</span></a>
+        <a href="mailto:kayan.metin@gmail.com">kayan.metin@gmail.com</a>
+      </div>
+    </div>
+  </footer>
 </body>
 </html>

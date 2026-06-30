@@ -1,36 +1,92 @@
 <!DOCTYPE html>
-<html lang="tr">
+<html lang="tr"
+      data-title-tr="DirectDrop — Destek"
+      data-title-en="DirectDrop — Support">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>DirectDrop — Destek</title>
-  <style>
-    body { font-family: system-ui, sans-serif; max-width: 720px; margin: 2rem auto; padding: 0 1rem; line-height: 1.6; color: #1a1a1a; }
-    h1 { font-size: 1.5rem; }
-    h2 { font-size: 1.1rem; margin-top: 1.5rem; }
-    a { color: #2563eb; }
-    .card { border: 1px solid #e5e7eb; border-radius: 12px; padding: 1rem; background: #f8fafc; }
-  </style>
+  <link rel="stylesheet" href="assets/site.css">
+  <script src="assets/lang.js"></script>
 </head>
 <body>
-  <h1>DirectDrop Destek</h1>
-  <p>DirectDrop, eşleşmiş cihazlar arasında doğrudan dosya transferi yapmak için kullanılan bir uygulamadır.</p>
+  <nav>
+    <div class="wrap">
+      <a class="brand" href="index.html"><span class="mark">D</span>Direct<b>Drop</b></a>
+      <div class="nav-right">
+        <div class="links">
+          <a href="index.html#indir"><span data-lang="tr">İndir</span><span data-lang="en">Download</span></a>
+          <a href="index.html#ozellikler"><span data-lang="tr">Özellikler</span><span data-lang="en">Features</span></a>
+          <a href="index.html#nasil"><span data-lang="tr">Nasıl çalışır</span><span data-lang="en">How it works</span></a>
+          <a href="support.html"><span data-lang="tr">Destek</span><span data-lang="en">Support</span></a>
+        </div>
+        <div class="lang-switch" role="group" aria-label="Language">
+          <button type="button" data-set-lang="tr">TR</button>
+          <button type="button" data-set-lang="en">EN</button>
+        </div>
+      </div>
+    </div>
+  </nav>
 
-  <div class="card">
-    <h2>Destek iletişimi</h2>
-    <p>Yardım, hata bildirimi veya geri bildirim için bize e-posta gönderebilirsiniz:</p>
-    <p><a href="mailto:kayan.metin@gmail.com">kayan.metin@gmail.com</a></p>
+  <div class="wrap page-head">
+    <h1><span data-lang="tr">DirectDrop Destek</span><span data-lang="en">DirectDrop Support</span></h1>
+    <p class="sub">
+      <span data-lang="tr">DirectDrop, eşleşmiş cihazlar arasında doğrudan dosya transferi yapmak için kullanılan bir uygulamadır.</span>
+      <span data-lang="en">DirectDrop is an app for transferring files directly between paired devices.</span>
+    </p>
   </div>
 
-  <h2>Sık yaşanan durumlar</h2>
-  <ul>
-    <li>İki cihazın da internete bağlı olduğundan emin olun.</li>
-    <li>QR kod ile eşleştirme yaparken kamera izninin açık olduğundan emin olun.</li>
-    <li>Bağlantı isteği bildirimleri için bildirim iznini etkinleştirin.</li>
-    <li>Kurumsal ağlar veya VPN bağlantıları WebRTC bağlantısını engelleyebilir; farklı bir ağ deneyin.</li>
-  </ul>
+  <div class="wrap prose">
+    <div class="contact-card">
+      <h2><span data-lang="tr">Destek iletişimi</span><span data-lang="en">Contact support</span></h2>
+      <p>
+        <span data-lang="tr">Yardım, hata bildirimi veya geri bildirim için bize e‑posta gönderebilirsiniz:</span>
+        <span data-lang="en">For help, bug reports or feedback, email us:</span>
+      </p>
+      <p><a class="mail" href="mailto:kayan.metin@gmail.com">kayan.metin@gmail.com</a></p>
+    </div>
 
-  <h2>Gizlilik</h2>
-  <p>Gizlilik politikamıza buradan ulaşabilirsiniz: <a href="privacy-policy.html">DirectDrop Gizlilik Politikası</a></p>
+    <h2><span data-lang="tr">Sık yaşanan durumlar</span><span data-lang="en">Common situations</span></h2>
+    <ul>
+      <li>
+        <span data-lang="tr">İki cihazın da internete bağlı olduğundan emin olun.</span>
+        <span data-lang="en">Make sure both devices are connected to the internet.</span>
+      </li>
+      <li>
+        <span data-lang="tr">QR kod ile eşleştirme yaparken kamera izninin açık olduğundan emin olun.</span>
+        <span data-lang="en">When pairing via QR code, make sure camera permission is granted.</span>
+      </li>
+      <li>
+        <span data-lang="tr">Bağlantı isteği bildirimleri için bildirim iznini etkinleştirin.</span>
+        <span data-lang="en">Enable notification permission to receive connection request alerts.</span>
+      </li>
+      <li>
+        <span data-lang="tr">Kurumsal ağlar veya VPN bağlantıları WebRTC bağlantısını engelleyebilir; farklı bir ağ deneyin.</span>
+        <span data-lang="en">Corporate networks or VPNs can block WebRTC; try a different network.</span>
+      </li>
+    </ul>
+
+    <h2><span data-lang="tr">Gizlilik</span><span data-lang="en">Privacy</span></h2>
+    <p>
+      <span data-lang="tr">Gizlilik politikamıza buradan ulaşabilirsiniz: </span>
+      <span data-lang="en">You can read our privacy policy here: </span>
+      <a href="privacy-policy.html"><span data-lang="tr">DirectDrop Gizlilik Politikası</span><span data-lang="en">DirectDrop Privacy Policy</span></a>
+    </p>
+  </div>
+
+  <footer>
+    <div class="wrap row">
+      <div>
+        <div class="brand" style="margin-bottom:8px"><span class="mark">D</span>Direct<b>Drop</b></div>
+        <div>© 2026 Metin Kayan</div>
+      </div>
+      <div class="footlinks">
+        <a href="index.html#indir"><span data-lang="tr">İndir</span><span data-lang="en">Download</span></a>
+        <a href="support.html"><span data-lang="tr">Destek</span><span data-lang="en">Support</span></a>
+        <a href="privacy-policy.html"><span data-lang="tr">Gizlilik Politikası</span><span data-lang="en">Privacy Policy</span></a>
+        <a href="mailto:kayan.metin@gmail.com">kayan.metin@gmail.com</a>
+      </div>
+    </div>
+  </footer>
 </body>
 </html>
